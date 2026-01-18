@@ -443,16 +443,27 @@ export async function monitorTlonProvider(opts = {}) {
       });
 
       // Dispatch to AI and get response
+      const dispatchStartTime = Date.now();
+      runtime.log?.(
+        `[tlon] Dispatching to AI for ${senderShip} (${isGroup ? `group: ${groupName}` : 'DM'})`
+      );
+
       await deps.dispatchReplyWithBufferedBlockDispatcher({
         ctx: ctxPayload,
         cfg: opts.cfg,
         dispatcherOptions: {
           deliver: async (payload) => {
+            const dispatchDuration = Date.now() - dispatchStartTime;
             const replyText = payload.text;
+
             if (!replyText) {
-              runtime.log?.(`[tlon] No reply text in AI response`);
+              runtime.log?.(`[tlon] No reply text in AI response (took ${dispatchDuration}ms)`);
               return;
             }
+
+            runtime.log?.(
+              `[tlon] AI response received (took ${dispatchDuration}ms), sending to Tlon...`
+            );
 
             // Send reply back to Tlon
             if (isGroup) {
@@ -473,10 +484,23 @@ export async function monitorTlonProvider(opts = {}) {
             }
           },
           onError: (err, info) => {
-            runtime.error?.(`[tlon] ${info.kind} reply failed: ${String(err)}`);
+            const dispatchDuration = Date.now() - dispatchStartTime;
+            runtime.error?.(
+              `[tlon] ${info.kind} reply failed after ${dispatchDuration}ms: ${String(err)}`
+            );
+            runtime.error?.(`[tlon] Error type: ${err?.constructor?.name || 'Unknown'}`);
+            runtime.error?.(`[tlon] Error details: ${JSON.stringify(info, null, 2)}`);
+            if (err?.stack) {
+              runtime.error?.(`[tlon] Stack trace: ${err.stack}`);
+            }
           },
         },
       });
+
+      const totalDuration = Date.now() - dispatchStartTime;
+      runtime.log?.(
+        `[tlon] AI dispatch completed for ${senderShip} (total: ${totalDuration}ms)`
+      );
     } catch (error) {
       runtime.error?.(`[tlon] Error processing message: ${error.message}`);
       runtime.error?.(`[tlon] Stack trace: ${error.stack}`);
@@ -484,7 +508,7 @@ export async function monitorTlonProvider(opts = {}) {
   };
 
   // Track currently subscribed channels for dynamic updates
-  const subscribedChannels = new Set(groupChannels);
+  const subscribedChannels = new Set(); // Start empty, add after successful subscription
   const subscribedDMs = new Set();
 
   /**
