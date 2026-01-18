@@ -483,6 +483,107 @@ export async function monitorTlonProvider(opts = {}) {
     }
   };
 
+  // Track currently subscribed channels for dynamic updates
+  const subscribedChannels = new Set(groupChannels);
+  const subscribedDMs = new Set();
+
+  /**
+   * Subscribe to a group channel
+   */
+  async function subscribeToChannel(channelNest) {
+    if (subscribedChannels.has(channelNest)) {
+      return; // Already subscribed
+    }
+
+    const parsed = parseChannelNest(channelNest);
+    if (!parsed) {
+      runtime.error?.(
+        `[tlon] Invalid channel format: ${channelNest} (expected: chat/~host-ship/channel-name)`
+      );
+      return;
+    }
+
+    try {
+      await api.subscribe({
+        app: "channels",
+        path: `/${channelNest}`,
+        event: handleIncomingGroupMessage(channelNest),
+        err: (error) => {
+          runtime.error?.(
+            `[tlon] Group subscription error for ${channelNest}: ${error}`
+          );
+        },
+        quit: () => {
+          runtime.log?.(`[tlon] Group subscription ended for ${channelNest}`);
+          subscribedChannels.delete(channelNest);
+        },
+      });
+      subscribedChannels.add(channelNest);
+      runtime.log?.(`[tlon] Subscribed to group channel: ${channelNest}`);
+    } catch (error) {
+      runtime.error?.(`[tlon] Failed to subscribe to ${channelNest}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Subscribe to a DM conversation
+   */
+  async function subscribeToDM(dmShip) {
+    if (subscribedDMs.has(dmShip)) {
+      return; // Already subscribed
+    }
+
+    try {
+      await api.subscribe({
+        app: "chat",
+        path: `/dm/${dmShip}`,
+        event: handleIncomingDM,
+        err: (error) => {
+          runtime.error?.(`[tlon] DM subscription error for ${dmShip}: ${error}`);
+        },
+        quit: () => {
+          runtime.log?.(`[tlon] DM subscription ended for ${dmShip}`);
+          subscribedDMs.delete(dmShip);
+        },
+      });
+      subscribedDMs.add(dmShip);
+      runtime.log?.(`[tlon] Subscribed to DM with ${dmShip}`);
+    } catch (error) {
+      runtime.error?.(`[tlon] Failed to subscribe to DM with ${dmShip}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Discover and subscribe to new channels
+   */
+  async function refreshChannelSubscriptions() {
+    try {
+      // Check for new DMs
+      const dmShips = await api.scry("/chat/dm.json");
+      for (const dmShip of dmShips) {
+        await subscribeToDM(dmShip);
+      }
+
+      // Check for new group channels (if auto-discovery is enabled)
+      if (account.autoDiscoverChannels !== false) {
+        const discoveredChannels = await fetchAllChannels(api, runtime);
+        for (const channelNest of discoveredChannels) {
+          await subscribeToChannel(channelNest);
+        }
+
+        // Log if we found new channels
+        const newChannelsCount = discoveredChannels.filter(
+          c => !subscribedChannels.has(c)
+        ).length;
+        if (newChannelsCount > 0) {
+          runtime.log?.(`[tlon] Discovered ${newChannelsCount} new channel(s)`);
+        }
+      }
+    } catch (error) {
+      runtime.error?.(`[tlon] Channel refresh failed: ${error.message}`);
+    }
+  }
+
   // Subscribe to incoming messages
   try {
     runtime.log?.(`[tlon] Subscribing to updates...`);
@@ -498,48 +599,12 @@ export async function monitorTlonProvider(opts = {}) {
 
     // Subscribe to each DM individually
     for (const dmShip of dmShips) {
-      try {
-        await api.subscribe({
-          app: "chat",
-          path: `/dm/${dmShip}`,
-          event: handleIncomingDM,
-          err: (error) => {
-            runtime.error?.(`[tlon] DM subscription error for ${dmShip}: ${error}`);
-          },
-          quit: () => {
-            runtime.log?.(`[tlon] DM subscription ended for ${dmShip}`);
-          },
-        });
-        runtime.log?.(`[tlon] Subscribed to DM with ${dmShip}`);
-      } catch (error) {
-        runtime.error?.(`[tlon] Failed to subscribe to DM with ${dmShip}: ${error.message}`);
-      }
+      await subscribeToDM(dmShip);
     }
 
     // Subscribe to each group channel
     for (const channelNest of groupChannels) {
-      const parsed = parseChannelNest(channelNest);
-      if (!parsed) {
-        runtime.error?.(
-          `[tlon] Invalid channel format: ${channelNest} (expected: chat/~host-ship/channel-name)`
-        );
-        continue;
-      }
-
-      await api.subscribe({
-        app: "channels",
-        path: `/${channelNest}`,
-        event: handleIncomingGroupMessage(channelNest),
-        err: (error) => {
-          runtime.error?.(
-            `[tlon] Group subscription error for ${channelNest}: ${error}`
-          );
-        },
-        quit: () => {
-          runtime.log?.(`[tlon] Group subscription ended for ${channelNest}`);
-        },
-      });
-      runtime.log?.(`[tlon] Subscribed to group channel: ${channelNest}`);
+      await subscribeToChannel(channelNest);
     }
 
     runtime.log?.(`[tlon] All subscriptions registered, connecting to SSE stream...`);
@@ -549,10 +614,26 @@ export async function monitorTlonProvider(opts = {}) {
 
     runtime.log?.(`[tlon] Connected! All subscriptions active`);
 
+    // Start dynamic channel discovery (poll every 2 minutes)
+    const POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+    const pollInterval = setInterval(() => {
+      if (!opts.abortSignal?.aborted) {
+        runtime.log?.(`[tlon] Checking for new channels...`);
+        refreshChannelSubscriptions().catch((error) => {
+          runtime.error?.(`[tlon] Channel refresh error: ${error.message}`);
+        });
+      }
+    }, POLL_INTERVAL_MS);
+
+    runtime.log?.(`[tlon] Dynamic channel discovery enabled (checking every 2 minutes)`);
+
     // Keep the monitor running until aborted
     if (opts.abortSignal) {
       await new Promise((resolve) => {
-        opts.abortSignal.addEventListener("abort", () => resolve(), {
+        opts.abortSignal.addEventListener("abort", () => {
+          clearInterval(pollInterval);
+          resolve();
+        }, {
           once: true,
         });
       });

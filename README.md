@@ -89,6 +89,7 @@ clawdbot message send --channel tlon --target ~sampel-palnet --message "Hello fr
 - **Send direct messages** to Urbit ships
 - **Receive and respond to DMs** automatically when the bot is mentioned
 - **Automatic group discovery** - Automatically finds and monitors all group channels your ship has access to
+- **Dynamic channel monitoring** - Checks for new channels every 2 minutes and subscribes automatically (no restart needed!)
 - **Group chat support** - Monitor multiple group channels simultaneously
 - **Respond in groups** when mentioned
 - **Automatic ship name normalization** (handles with or without ~)
@@ -107,11 +108,28 @@ The plugin monitors incoming messages on your Urbit ship (both DMs and group cha
 4. **Generate response** - AI generates an appropriate contextual response
 5. **Send reply** - Delivers the response back via Tlon's SSE API (to the DM or group channel)
 
+### Dynamic Channel Discovery
+
+The bot automatically discovers and subscribes to new channels without requiring a restart:
+
+- **Initial Discovery**: On startup, queries `/~/scry/groups-ui/v6/init.json` to find all accessible channels
+- **Periodic Refresh**: Every 2 minutes, re-checks for new channels and DM conversations
+- **Auto-Subscribe**: Automatically subscribes to any newly discovered channels
+- **No Restart Needed**: Join a new group or start a new DM, and the bot will pick it up within 2 minutes
+
+**What happens when you join a new group:**
+1. You join a new Tlon group or channel
+2. Within 2 minutes, the bot polls the scry endpoint
+3. Discovers the new channel(s)
+4. Automatically subscribes to them
+5. Starts responding to mentions immediately
+
 **Technical Flow:**
 - Messages arrive via Urbit's SSE (Server-Sent Events) subscription system
 - Direct messages use the `chat-dm-action` mark with `memo` structure
 - Group messages use the `channel-action-1` mark with `essay` structure
 - AI responses maintain conversation continuity via session keys
+- Channel discovery uses `setInterval()` with 2-minute polling
 
 **Examples:**
 
@@ -202,7 +220,7 @@ The bot will respond when mentioned in these channels!
 - Message history in conversation context
 - Media support
 - Thread support
-- Dynamic subscription updates (monitor new channels without restart)
+- Configurable polling interval (currently fixed at 2 minutes)
 
 ## License
 
