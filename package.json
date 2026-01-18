@@ -1,0 +1,36 @@
+{
+  "name": "@clawdbot/tlon",
+  "version": "0.1.0",
+  "description": "Tlon/Urbit channel adapter for Clawdbot",
+  "type": "module",
+  "main": "index.js",
+  "clawdbot": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "keywords": [
+    "clawdbot",
+    "tlon",
+    "urbit",
+    "channel",
+    "plugin"
+  ],
+  "author": "William Arzt",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/williamarzt/clawdbot-tlon-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/williamarzt/clawdbot-tlon-plugin/issues"
+  },
+  "dependencies": {
+    "@urbit/http-api": "^3.0.0",
+    "@urbit/aura": "^2.0.0",
+    "eventsource": "^2.0.2"
+  },
+  "peerDependencies": {
+    "clawdbot": "*"
+  }
+}
