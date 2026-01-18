@@ -1,32 +1,52 @@
-# Clawdbot Tlon/Urbit Plugin
+# Clawdbot Tlon/Urbit Integration
 
-A channel adapter that enables Clawdbot to send and receive messages on Tlon/Urbit.
+Complete documentation for integrating Clawdbot with Tlon messenger (Urbit-based platform).
 
-## Installation
+## Overview
 
-From your tlon-mcp-server directory:
+This extension enables Clawdbot to:
+- Monitor and respond to direct messages on Tlon/Urbit
+- Monitor and respond to group channel messages when mentioned
+- Auto-discover available group channels
+- Use per-conversation subscriptions for reliable message delivery
 
-```bash
-cd clawdbot-tlon-plugin
-npm install
-clawdbot plugins install ./
-```
+**Ship:** ~sitrul-nacwyl
+**Test User:** ~malmur-halmex
+
+## Architecture
+
+### Files
+
+- **`index.js`** - Plugin entry point, registers the Tlon channel adapter
+- **`monitor.js`** - Core monitoring logic, handles incoming messages and AI dispatch
+- **`urbit-sse-client.js`** - Custom SSE client for Urbit HTTP API
+- **`core-bridge.js`** - Dynamic loader for clawdbot core modules
+- **`package.json`** - Plugin package definition
+
+### How It Works
+
+1. **Authentication**: Uses ship name + code to authenticate via `/~/login` endpoint
+2. **Channel Creation**: Creates Urbit channel via PUT to `/~/channel/{uid}`
+3. **Activation**: Sends "helm-hi" poke to activate channel (required!)
+4. **Subscriptions**:
+   - **DMs**: Individual subscriptions to `/dm/{ship}` for each conversation
+   - **Groups**: Individual subscriptions to `/{channelNest}` for each channel
+5. **SSE Stream**: Opens server-sent events stream for real-time updates
+6. **Auto-Discovery**: Queries `/groups-ui/v6/init.json` to find all available channels
+7. **Dynamic Refresh**: Polls every 2 minutes for new conversations/channels
+8. **Message Processing**: When bot is mentioned, routes to AI via clawdbot core
 
 ## Configuration
 
-You need to configure your Urbit ship credentials. You can do this via the clawdbot config file or through the CLI.
+### 1. Install Dependencies
 
-### Required Configuration
+```bash
+cd ~/.clawdbot/extensions/tlon
+npm install
+```
 
-- `ship`: Your Urbit ship name (without ~)
-- `code`: Your Urbit +code (authentication code)
-- `url`: Your Urbit ship URL (e.g., http://localhost:8080)
-- `groupChannels`: (Optional) Array of group channels to monitor manually (format: `chat/~host-ship/channel-name`)
-- `autoDiscoverChannels`: (Optional) Set to `false` to disable automatic channel discovery (default: `true`)
+### 2. Configure Credentials
 
-### Example Configuration
-
-**Basic Configuration:**
 Edit `~/.clawdbot/clawdbot.json`:
 
 ```json
@@ -42,186 +62,467 @@ Edit `~/.clawdbot/clawdbot.json`:
 }
 ```
 
-The bot will attempt to auto-discover group channels. If auto-discovery doesn't work on your ship, you'll need to manually add channels (see below).
-
-**Manual Group Channels (Optional):**
-If you want to manually specify which channels to monitor instead of auto-discovery:
-
+**For localhost development:**
 ```json
-{
-  "channels": {
-    "tlon": {
-      "enabled": true,
-      "ship": "zod",
-      "code": "lidlut-tabwed-pillex-ridrup",
-      "url": "http://localhost:8080",
-      "autoDiscoverChannels": false,
-      "groupChannels": [
-        "chat/~sampel-palnet/my-group-123",
-        "chat/~other-ship/another-channel"
-      ]
-    }
-  }
-}
+"url": "http://localhost:8080"
 ```
 
-Or via CLI:
+**For Tlon-hosted ships:**
+```json
+"url": "https://{ship-name}.tlon.network"
+```
+
+### 3. Set Environment Variable
+
+The monitor needs to find clawdbot's core modules. Set the environment variable:
 
 ```bash
-clawdbot config set channels.tlon.enabled true
-clawdbot config set channels.tlon.ship "zod"
-clawdbot config set channels.tlon.code "lidlut-tabwed-pillex-ridrup"
-clawdbot config set channels.tlon.url "http://localhost:8080"
+export CLAWDBOT_ROOT=/opt/homebrew/lib/node_modules/clawdbot
 ```
 
-For group channels, edit the config file directly to add the `groupChannels` array.
+Or if clawdbot is installed elsewhere:
+```bash
+export CLAWDBOT_ROOT=$(dirname $(dirname $(readlink -f $(which clawdbot))))
+```
+
+**Make it permanent** (add to `~/.zshrc` or `~/.bashrc`):
+```bash
+echo 'export CLAWDBOT_ROOT=/opt/homebrew/lib/node_modules/clawdbot' >> ~/.zshrc
+```
+
+### 4. Configure AI Authentication
+
+The bot needs API credentials to generate responses.
+
+**Option A: Use Claude Code CLI credentials**
+```bash
+clawdbot agents add main
+# Select "Use Claude Code CLI credentials"
+```
+
+**Option B: Use Anthropic API key**
+```bash
+clawdbot agents add main
+# Enter your API key from console.anthropic.com
+```
+
+### 5. Start the Gateway
+
+```bash
+CLAWDBOT_ROOT=/opt/homebrew/lib/node_modules/clawdbot clawdbot gateway
+```
+
+Or create a launch script:
+
+```bash
+cat > ~/start-clawdbot.sh << 'EOF'
+#!/bin/bash
+export CLAWDBOT_ROOT=/opt/homebrew/lib/node_modules/clawdbot
+clawdbot gateway
+EOF
+chmod +x ~/start-clawdbot.sh
+```
 
 ## Usage
 
-Once configured, you can send messages to Urbit ships:
+### Testing
 
+1. Send a DM from another ship to ~sitrul-nacwyl
+2. Mention the bot: `~sitrul-nacwyl hello there!`
+3. Bot should respond with AI-generated reply
+
+### Monitoring Logs
+
+Check gateway logs:
 ```bash
-clawdbot message send --channel tlon --target ~sampel-palnet --message "Hello from Clawdbot!"
+tail -f /tmp/clawdbot/clawdbot-$(date +%Y-%m-%d).log
 ```
 
-## Features
+Look for these indicators:
+- `[tlon] Successfully authenticated to https://...`
+- `[tlon] Auto-discovered N chat channel(s)`
+- `[tlon] Connected! All subscriptions active`
+- `[tlon] Received DM from ~ship: "..." (mentioned: true)`
+- `[tlon] Dispatching to AI for ~ship (DM)`
+- `[tlon] Delivered AI reply to ~ship`
 
-- **Send direct messages** to Urbit ships
-- **Receive and respond to DMs** automatically when the bot is mentioned
-- **Automatic group discovery** - Automatically finds and monitors all group channels your ship has access to
-- **Dynamic channel monitoring** - Checks for new channels every 2 minutes and subscribes automatically (no restart needed!)
-- **Group chat support** - Monitor multiple group channels simultaneously
-- **Respond in groups** when mentioned
-- **Automatic ship name normalization** (handles with or without ~)
-- **Connection authentication** and management
-- **Real-time monitoring** via Urbit subscriptions
-- **AI-powered responses** through clawdbot's agent system
-- **Manual channel override** - Optionally specify exact channels to monitor
+### Group Channels
 
-## How It Works
+The bot automatically discovers and subscribes to all group channels. To manually configure specific channels:
 
-The plugin monitors incoming messages on your Urbit ship (both DMs and group channels). When someone mentions your ship's name in a message, the bot will:
-
-1. **Detect the mention** - Uses regex pattern matching to identify when your ship is mentioned
-2. **Route to AI** - Forwards the message through clawdbot's internal `dispatchReplyWithBufferedBlockDispatcher` API
-3. **Process through AI agent** - The message is processed by Claude with full conversation context
-4. **Generate response** - AI generates an appropriate contextual response
-5. **Send reply** - Delivers the response back via Tlon's SSE API (to the DM or group channel)
-
-### Dynamic Channel Discovery
-
-The bot automatically discovers and subscribes to new channels without requiring a restart:
-
-- **Initial Discovery**: On startup, queries `/~/scry/groups-ui/v6/init.json` to find all accessible channels
-- **Periodic Refresh**: Every 2 minutes, re-checks for new channels and DM conversations
-- **Auto-Subscribe**: Automatically subscribes to any newly discovered channels
-- **No Restart Needed**: Join a new group or start a new DM, and the bot will pick it up within 2 minutes
-
-**What happens when you join a new group:**
-1. You join a new Tlon group or channel
-2. Within 2 minutes, the bot polls the scry endpoint
-3. Discovers the new channel(s)
-4. Automatically subscribes to them
-5. Starts responding to mentions immediately
-
-**Technical Flow:**
-- Messages arrive via Urbit's SSE (Server-Sent Events) subscription system
-- Direct messages use the `chat-dm-action` mark with `memo` structure
-- Group messages use the `channel-action-1` mark with `essay` structure
-- AI responses maintain conversation continuity via session keys
-- Channel discovery uses `setInterval()` with 2-minute polling
-
-**Examples:**
-
-Direct Message:
-```
-User (via DM): "Hey ~zod, what's the weather like today?"
-Bot: *processes through AI agent and responds with weather info*
-```
-
-Group Channel:
-```
-User (in group): "Hey ~zod, can you summarize this discussion?"
-Bot: *analyzes context and responds in the group with summary*
-```
-
-## Architecture
-
-The plugin consists of three main components:
-
-### 1. **index.js** - Plugin Registration
-- Defines the Tlon channel plugin interface
-- Implements configuration schema and account management
-- Registers with clawdbot's plugin system
-- Handles outbound message sending
-
-### 2. **monitor.js** - Message Processing
-- Authenticates with Urbit ship
-- Auto-discovers group channels via `/~/scry/groups-ui/v6/init.json`
-- Subscribes to DMs and group channels
-- Detects mentions using regex
-- Routes messages to AI via `core-bridge.js`
-- Delivers AI responses back to Tlon
-
-### 3. **core-bridge.js** - Clawdbot Integration
-- Dynamically imports clawdbot's internal APIs
-- Provides `resolveAgentRoute()` for session management
-- Provides `formatAgentEnvelope()` for message formatting
-- Provides `dispatchReplyWithBufferedBlockDispatcher()` for AI routing
-- Ensures proper isolation from clawdbot's internal structure
-
-### 4. **urbit-sse-client.js** - SSE Communication
-- Custom SSE client for Urbit's event stream
-- Handles subscriptions, pokes, and authentication
-- Manages connection lifecycle and reconnection
-
-## Limitations
-
-- Bot only responds when explicitly mentioned by ship name
-- No media support yet
-- No message history in context (single-message processing)
-
-## Finding Group Channel Names
-
-To add group channels manually:
-
-1. **In Tlon:** Open the group and look at the URL or channel details
-2. **Format:** Channels are identified as `chat/~[host-ship]/[channel-name]`
-3. **Example:** `chat/~lomder-librun/genchat`
-
-**How to find the exact channel identifier:**
-- The **host ship** is the ship that hosts the group (starts with ~)
-- The **channel name** is the specific channel within that group
-
-**Add to your config:**
 ```json
 {
   "channels": {
     "tlon": {
       "enabled": true,
       "ship": "sitrul-nacwyl",
-      "code": "your-code-here",
+      "code": "dolsug-ticsen-ripmus-bonmud",
       "url": "https://sitrul-nacwyl.tlon.network",
+      "autoDiscoverChannels": false,
       "groupChannels": [
-        "chat/~lomder-librun/genchat",
-        "chat/~other-host/another-channel"
+        "chat/~host-ship/channel-name",
+        "chat/~another-host/another-channel"
       ]
     }
   }
 }
 ```
 
-The bot will respond when mentioned in these channels!
+## Technical Deep Dive
+
+### Urbit HTTP API Flow
+
+1. **Login** (POST `/~/login`)
+   - Sends `password={code}`
+   - Returns authentication cookie in `set-cookie` header
+
+2. **Channel Creation** (PUT `/~/channel/{channelId}`)
+   - Channel ID format: `{timestamp}-{random}`
+   - Body: array of subscription objects
+   - Response: 204 No Content
+
+3. **Channel Activation** (PUT `/~/channel/{channelId}`)
+   - **Critical:** Must send helm-hi poke BEFORE opening SSE stream
+   - Poke structure:
+     ```json
+     {
+       "id": timestamp,
+       "action": "poke",
+       "ship": "sitrul-nacwyl",
+       "app": "hood",
+       "mark": "helm-hi",
+       "json": "Opening API channel"
+     }
+     ```
+
+4. **SSE Stream** (GET `/~/channel/{channelId}`)
+   - Headers: `Accept: text/event-stream`
+   - Returns Server-Sent Events
+   - Format:
+     ```
+     id: {event-id}
+     data: {json-payload}
+
+     ```
+
+### Subscription Paths
+
+#### DMs (Chat App)
+- **Path:** `/dm/{ship}`
+- **App:** `chat`
+- **Event Format:**
+  ```json
+  {
+    "id": "~ship/timestamp",
+    "whom": "~other-ship",
+    "response": {
+      "add": {
+        "memo": {
+          "author": "~sender-ship",
+          "sent": 1768742460781,
+          "content": [
+            {
+              "inline": [
+                "text",
+                {"ship": "~mentioned-ship"},
+                "more text",
+                {"break": null}
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+  ```
+
+#### Group Channels (Channels App)
+- **Path:** `/{channelNest}`
+- **Channel Nest Format:** `chat/~host-ship/channel-name`
+- **App:** `channels`
+- **Event Format:**
+  ```json
+  {
+    "response": {
+      "post": {
+        "id": "message-id",
+        "r-post": {
+          "set": {
+            "essay": {
+              "author": "~sender-ship",
+              "sent": 1768742460781,
+              "kind": "/chat",
+              "content": [...]
+            }
+          }
+        }
+      }
+    }
+  }
+  ```
+
+### Text Extraction
+
+Message content uses inline format with mixed types:
+- Strings: plain text
+- Objects with `ship`: mentions (e.g., `{"ship": "~sitrul-nacwyl"}`)
+- Objects with `break`: line breaks (e.g., `{"break": null}`)
+
+Example:
+```json
+{
+  "inline": [
+    "Hey ",
+    {"ship": "~sitrul-nacwyl"},
+    " how are you?",
+    {"break": null},
+    "This is a new line"
+  ]
+}
+```
+
+Extracts to: `"Hey ~sitrul-nacwyl how are you?\nThis is a new line"`
+
+### Mention Detection
+
+Simple includes check (case-insensitive):
+```javascript
+const normalizedBotShip = botShipName.startsWith("~")
+  ? botShipName
+  : `~${botShipName}`;
+return messageText.toLowerCase().includes(normalizedBotShip.toLowerCase());
+```
+
+Note: Word boundaries (`\b`) don't work with `~` character.
+
+## Troubleshooting
+
+### Issue: "Cannot read properties of undefined (reading 'href')"
+
+**Cause:** Some clawdbot dependencies (axios, Slack SDK) expect browser globals
+
+**Fix:** Window.location polyfill is already added to monitor.js (lines 1-18)
+
+### Issue: "Unable to resolve Clawdbot root"
+
+**Cause:** core-bridge.js can't find clawdbot installation
+
+**Fix:** Set `CLAWDBOT_ROOT` environment variable:
+```bash
+export CLAWDBOT_ROOT=/opt/homebrew/lib/node_modules/clawdbot
+```
+
+### Issue: SSE Stream Returns 403 Forbidden
+
+**Cause:** Trying to open SSE stream without activating channel first
+
+**Fix:** Send helm-hi poke before opening stream (urbit-sse-client.js handles this)
+
+### Issue: No Events Received After Subscribing
+
+**Cause:** Wrong subscription path or app name
+
+**Fix:**
+- DMs: Use `/dm/{ship}` with `app: "chat"`
+- Groups: Use `/{channelNest}` with `app: "channels"`
+
+### Issue: Messages Show "[object Object]"
+
+**Cause:** Not handling inline content objects properly
+
+**Fix:** Text extraction handles mentions and breaks (monitor.js `extractMessageText()`)
+
+### Issue: Bot Not Detecting Mentions
+
+**Cause:** Message doesn't contain bot's ship name
+
+**Debug:**
+```bash
+tail -f /tmp/clawdbot/clawdbot-*.log | grep "mentioned:"
+```
+
+Should show:
+```
+[tlon] Received DM from ~malmur-halmex: "~sitrul-nacwyl hello..." (mentioned: true)
+```
+
+### Issue: "No API key found for provider 'anthropic'"
+
+**Cause:** AI authentication not configured
+
+**Fix:** Run `clawdbot agents add main` and configure credentials
+
+### Issue: Gateway Port Already in Use
+
+**Fix:**
+```bash
+# Stop existing instance
+clawdbot daemon stop
+
+# Or force kill
+lsof -ti:18789 | xargs kill -9
+```
+
+## Development Notes
+
+### Testing Without Clawdbot
+
+You can test the Urbit API directly:
+
+```javascript
+import { UrbitSSEClient } from "./urbit-sse-client.js";
+
+const api = new UrbitSSEClient(
+  "https://sitrul-nacwyl.tlon.network",
+  "your-cookie-here"
+);
+
+// Subscribe to DMs
+await api.subscribe({
+  app: "chat",
+  path: "/dm/malmur-halmex",
+  event: (data) => console.log("DM:", data),
+  err: (e) => console.error("Error:", e),
+  quit: () => console.log("Quit")
+});
+
+// Connect
+await api.connect();
+
+// Send a DM
+await api.poke({
+  app: "chat",
+  mark: "chat-dm-action",
+  json: {
+    ship: "~malmur-halmex",
+    diff: {
+      id: `~sitrul-nacwyl/${Date.now()}`,
+      delta: {
+        add: {
+          memo: {
+            content: [{ inline: ["Hello!"] }],
+            author: "~sitrul-nacwyl",
+            sent: Date.now()
+          },
+          kind: null,
+          time: null
+        }
+      }
+    }
+  }
+});
+```
+
+### Debugging SSE Events
+
+Enable verbose logging in urbit-sse-client.js:
+
+```javascript
+// Line 169-171
+if (parsed.response !== "subscribe" && parsed.response !== "poke") {
+  console.log("[SSE] Received event:", JSON.stringify(parsed).substring(0, 500));
+}
+```
+
+Remove the condition to see all events:
+```javascript
+console.log("[SSE] Received event:", JSON.stringify(parsed).substring(0, 500));
+```
+
+### Channel Nest Format
+
+Format: `{type}/{host-ship}/{channel-name}`
+
+Examples:
+- `chat/~bitpyx-dildus/core`
+- `chat/~malmur-halmex/v3aedb3s`
+- `chat/~sitrul-nacwyl/tm-wayfinding-group-chat`
+
+Parse with:
+```javascript
+const match = channelNest.match(/^([^/]+)\/([^/]+)\/(.+)$/);
+const [, type, hostShip, channelName] = match;
+```
+
+### Auto-Discovery Endpoint
+
+Query: `GET /~/scry/groups-ui/v6/init.json`
+
+Response structure:
+```json
+{
+  "groups": {
+    "group-id": {
+      "channels": {
+        "chat/~host/name": { ... },
+        "diary/~host/name": { ... }
+      }
+    }
+  }
+}
+```
+
+Filter for chat channels only:
+```javascript
+if (channelNest.startsWith("chat/")) {
+  channels.push(channelNest);
+}
+```
+
+## Implementation Timeline
+
+### Major Milestones
+
+1. ✅ Plugin structure and registration
+2. ✅ Authentication and cookie management
+3. ✅ Channel creation and activation (helm-hi poke)
+4. ✅ SSE stream connection
+5. ✅ DM subscription and event parsing
+6. ✅ Group channel support
+7. ✅ Auto-discovery of channels
+8. ✅ Per-conversation subscriptions
+9. ✅ Text extraction (mentions and breaks)
+10. ✅ Mention detection
+11. ✅ Node.js polyfills (window.location)
+12. ✅ Core module integration
+13. ⏳ API authentication (user needs to configure)
+
+### Key Discoveries
+
+- **Helm-hi requirement:** Must send helm-hi poke before opening SSE stream
+- **Subscription paths:** Frontend uses `/v3` globally, but individual `/dm/{ship}` and `/{channelNest}` paths work better
+- **Event formats:** V3 API uses `essay` and `memo` structures (not older `writs` format)
+- **Inline content:** Mixed array of strings and objects (mentions, breaks)
+- **Tilde handling:** Ship mentions already include `~` prefix
+- **Word boundaries:** `\b` regex doesn't work with `~` character
+- **Browser globals:** axios and Slack SDK need window.location polyfill
+- **Module resolution:** Need CLAWDBOT_ROOT for dynamic imports
+
+## Resources
+
+- **Tlon Apps GitHub:** https://github.com/tloncorp/tlon-apps
+- **Urbit HTTP API:** @urbit/http-api package
+- **Tlon Frontend Code:** `/tmp/tlon-apps/packages/shared/src/api/chatApi.ts`
+- **Clawdbot Docs:** https://docs.clawd.bot/
+- **Anthropic Provider:** https://docs.clawd.bot/providers/anthropic
 
 ## Future Enhancements
 
-- Respond to all messages (not just mentions)
-- Contact nickname resolution
-- Message history in conversation context
-- Media support
-- Thread support
-- Configurable polling interval (currently fixed at 2 minutes)
+- [ ] Support for message reactions
+- [ ] Support for message editing/deletion
+- [ ] Support for attachments/images
+- [ ] Typing indicators
+- [ ] Read receipts
+- [ ] Message threading
+- [ ] Channel-specific bot personas
+- [ ] Rate limiting
+- [ ] Message queuing for offline ships
+- [ ] Metrics and monitoring
 
-## License
+## Credits
 
-MIT
+Built for integrating Clawdbot with Tlon/Urbit messenger.
+
+**Ship:** ~sitrul-nacwyl
+**Developer:** Claude (Sonnet 4.5)
+**Platform:** Tlon/Urbit

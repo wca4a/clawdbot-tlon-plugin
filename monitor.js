@@ -1,3 +1,22 @@
+// Polyfill window.location for Node.js environment
+// Required because some clawdbot dependencies (axios, Slack SDK) expect browser globals
+if (typeof global.window === "undefined") {
+  global.window = {};
+}
+if (!global.window.location) {
+  global.window.location = {
+    href: "http://localhost",
+    origin: "http://localhost",
+    protocol: "http:",
+    host: "localhost",
+    hostname: "localhost",
+    port: "",
+    pathname: "/",
+    search: "",
+    hash: "",
+  };
+}
+
 import { unixToDa, formatUd } from "@urbit/aura";
 import { UrbitSSEClient } from "./urbit-sse-client.js";
 import { loadCoreChannelDeps } from "./core-bridge.js";
