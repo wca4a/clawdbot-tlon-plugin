@@ -6,7 +6,7 @@
 import { Readable } from "stream";
 
 export class UrbitSSEClient {
-  constructor(url, cookie) {
+  constructor(url, cookie, options = {}) {
     this.url = url;
     // Extract just the cookie value (first part before semicolon)
     this.cookie = cookie.split(";")[0];
@@ -18,6 +18,15 @@ export class UrbitSSEClient {
     this.eventHandlers = new Map();
     this.aborted = false;
     this.streamController = null;
+
+    // Reconnection settings
+    this.onReconnect = options.onReconnect || null;
+    this.autoReconnect = options.autoReconnect !== false; // Default true
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = options.maxReconnectAttempts || 10;
+    this.reconnectDelay = options.reconnectDelay || 1000; // Start at 1s
+    this.maxReconnectDelay = options.maxReconnectDelay || 30000; // Max 30s
+    this.isConnected = false;
   }
 
   /**
@@ -84,6 +93,8 @@ export class UrbitSSEClient {
 
     // Open SSE stream
     await this.openStream();
+    this.isConnected = true;
+    this.reconnectAttempts = 0; // Reset on successful connection
   }
 
   /**
@@ -128,18 +139,27 @@ export class UrbitSSEClient {
     const stream =
       reader instanceof ReadableStream ? Readable.fromWeb(reader) : reader;
 
-    for await (const chunk of stream) {
-      if (this.aborted) break;
+    try {
+      for await (const chunk of stream) {
+        if (this.aborted) break;
 
-      buffer += chunk.toString();
+        buffer += chunk.toString();
 
-      // Process complete SSE events
-      let eventEnd;
-      while ((eventEnd = buffer.indexOf("\n\n")) !== -1) {
-        const eventData = buffer.substring(0, eventEnd);
-        buffer = buffer.substring(eventEnd + 2);
+        // Process complete SSE events
+        let eventEnd;
+        while ((eventEnd = buffer.indexOf("\n\n")) !== -1) {
+          const eventData = buffer.substring(0, eventEnd);
+          buffer = buffer.substring(eventEnd + 2);
 
-        this.processEvent(eventData);
+          this.processEvent(eventData);
+        }
+      }
+    } finally {
+      // Stream ended (either normally or due to error)
+      if (!this.aborted && this.autoReconnect) {
+        this.isConnected = false;
+        console.log("[SSE] Stream ended, attempting reconnection...");
+        await this.attemptReconnect();
       }
     }
   }
@@ -164,6 +184,16 @@ export class UrbitSSEClient {
 
     try {
       const parsed = JSON.parse(data);
+
+      // Handle quit events - subscription ended
+      if (parsed.response === "quit") {
+        console.log(`[SSE] Received quit event for subscription ${parsed.id}`);
+        const handlers = this.eventHandlers.get(parsed.id);
+        if (handlers && handlers.quit) {
+          handlers.quit();
+        }
+        return;
+      }
 
       // Debug: Log received events (skip subscription confirmations)
       if (parsed.response !== "subscribe" && parsed.response !== "poke") {
@@ -249,10 +279,66 @@ export class UrbitSSEClient {
   }
 
   /**
+   * Attempt to reconnect with exponential backoff
+   */
+  async attemptReconnect() {
+    if (this.aborted || !this.autoReconnect) {
+      console.log("[SSE] Reconnection aborted or disabled");
+      return;
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(
+        `[SSE] Max reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`
+      );
+      return;
+    }
+
+    this.reconnectAttempts++;
+
+    // Calculate delay with exponential backoff
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+      this.maxReconnectDelay
+    );
+
+    console.log(
+      `[SSE] Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms...`
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    try {
+      // Generate new channel ID for reconnection
+      this.channelId = `${Math.floor(Date.now() / 1000)}-${Math.random()
+        .toString(36)
+        .substring(2, 8)}`;
+      this.channelUrl = `${this.url}/~/channel/${this.channelId}`;
+
+      console.log(`[SSE] Reconnecting with new channel ID: ${this.channelId}`);
+
+      // Call reconnect callback if provided
+      if (this.onReconnect) {
+        await this.onReconnect(this);
+      }
+
+      // Reconnect
+      await this.connect();
+
+      console.log("[SSE] Reconnection successful!");
+    } catch (error) {
+      console.error(`[SSE] Reconnection failed: ${error.message}`);
+      // Try again
+      await this.attemptReconnect();
+    }
+  }
+
+  /**
    * Close the connection
    */
   async close() {
     this.aborted = true;
+    this.isConnected = false;
 
     try {
       // Send unsubscribe for all subscriptions
