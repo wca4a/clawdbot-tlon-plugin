@@ -32,9 +32,13 @@ This extension enables Clawdbot to:
    - **DMs**: Individual subscriptions to `/dm/{ship}` for each conversation
    - **Groups**: Individual subscriptions to `/{channelNest}` for each channel
 5. **SSE Stream**: Opens server-sent events stream for real-time updates
-6. **Auto-Discovery**: Queries `/groups-ui/v6/init.json` to find all available channels
-7. **Dynamic Refresh**: Polls every 2 minutes for new conversations/channels
-8. **Message Processing**: When bot is mentioned, routes to AI via clawdbot core
+6. **Auto-Reconnection**: Automatically reconnects if SSE stream dies
+   - Exponential backoff (1s to 30s delays)
+   - Up to 10 reconnection attempts
+   - Generates new channel ID on each attempt
+7. **Auto-Discovery**: Queries `/groups-ui/v6/init.json` to find all available channels
+8. **Dynamic Refresh**: Polls every 2 minutes for new conversations/channels
+9. **Message Processing**: When bot is mentioned, routes to AI via clawdbot core
 
 ## Configuration
 
@@ -361,6 +365,42 @@ clawdbot daemon stop
 
 # Or force kill
 lsof -ti:18789 | xargs kill -9
+```
+
+### Issue: Bot Stops Responding (SSE Disconnection)
+
+**Cause:** Urbit SSE stream disconnected (sent "quit" event or stream ended)
+
+**Symptoms:**
+- Logs show: `[SSE] Received event: {"id":X,"response":"quit"}`
+- No more incoming SSE events
+- Bot appears online but doesn't respond to mentions
+
+**Fix:** The bot now **automatically reconnects**! Look for these log messages:
+```
+[SSE] Stream ended, attempting reconnection...
+[SSE] Reconnection attempt 1/10 in 1000ms...
+[SSE] Reconnecting with new channel ID: xxx-yyy
+[SSE] Reconnection successful!
+```
+
+**Manual restart if needed:**
+```bash
+kill $(pgrep -f "clawdbot gateway")
+CLAWDBOT_ROOT=/opt/homebrew/lib/node_modules/clawdbot clawdbot gateway
+```
+
+**Configuration options** (in urbit-sse-client.js constructor):
+```javascript
+new UrbitSSEClient(url, cookie, {
+  autoReconnect: true,          // Default: true
+  maxReconnectAttempts: 10,     // Default: 10
+  reconnectDelay: 1000,         // Initial delay: 1s
+  maxReconnectDelay: 30000,     // Max delay: 30s
+  onReconnect: async (client) => {
+    // Optional callback for resubscription logic
+  }
+})
 ```
 
 ## Development Notes
