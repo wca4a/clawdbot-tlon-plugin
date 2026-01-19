@@ -58,9 +58,9 @@ Edit `~/.clawdbot/clawdbot.json`:
   "channels": {
     "tlon": {
       "enabled": true,
-      "ship": "sitrul-nacwyl",
-      "code": "dolsug-ticsen-ripmus-bonmud",
-      "url": "https://sitrul-nacwyl.tlon.network"
+      "ship": "your-ship-name",
+      "code": "your-ship-code",
+      "url": "https://your-ship-name.tlon.network"
     }
   }
 }
@@ -159,9 +159,9 @@ The bot automatically discovers and subscribes to all group channels. To manuall
   "channels": {
     "tlon": {
       "enabled": true,
-      "ship": "sitrul-nacwyl",
-      "code": "dolsug-ticsen-ripmus-bonmud",
-      "url": "https://sitrul-nacwyl.tlon.network",
+      "ship": "your-ship-name",
+      "code": "your-ship-code",
+      "url": "https://your-ship-name.tlon.network",
       "autoDiscoverChannels": false,
       "groupChannels": [
         "chat/~host-ship/channel-name",
