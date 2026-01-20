@@ -9,6 +9,7 @@ This extension enables Clawdbot to:
 - Monitor and respond to group channel messages when mentioned
 - Auto-discover available group channels
 - Use per-conversation subscriptions for reliable message delivery
+- **Automatic AI model fallback** - Seamlessly switches from Anthropic to OpenAI when rate limited (see [FALLBACK.md](./FALLBACK.md))
 
 **Ship:** ~sitrul-nacwyl
 **Test User:** ~malmur-halmex
@@ -22,6 +23,7 @@ This extension enables Clawdbot to:
 - **`urbit-sse-client.js`** - Custom SSE client for Urbit HTTP API
 - **`core-bridge.js`** - Dynamic loader for clawdbot core modules
 - **`package.json`** - Plugin package definition
+- **`FALLBACK.md`** - AI model fallback system documentation
 
 ### How It Works
 
@@ -39,6 +41,11 @@ This extension enables Clawdbot to:
 7. **Auto-Discovery**: Queries `/groups-ui/v6/init.json` to find all available channels
 8. **Dynamic Refresh**: Polls every 2 minutes for new conversations/channels
 9. **Message Processing**: When bot is mentioned, routes to AI via clawdbot core
+10. **AI Fallback**: Automatically switches providers when rate limited
+   - Primary: Anthropic Claude Sonnet 4.5
+   - Fallbacks: OpenAI GPT-4o, GPT-4 Turbo
+   - Automatic cooldown management
+   - See [FALLBACK.md](./FALLBACK.md) for details
 
 ## Configuration
 
