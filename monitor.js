@@ -136,6 +136,27 @@ function isBotMentioned(messageText, botShipName) {
 }
 
 /**
+ * Checks if a ship is allowed to send DMs to the bot
+ */
+function isDmAllowed(senderShip, account) {
+  // If dmAllowlist is not configured or empty, allow all
+  if (!account.dmAllowlist || !Array.isArray(account.dmAllowlist) || account.dmAllowlist.length === 0) {
+    return true;
+  }
+
+  // Normalize ship names for comparison (ensure ~ prefix)
+  const normalizedSender = senderShip.startsWith("~")
+    ? senderShip
+    : `~${senderShip}`;
+
+  const normalizedAllowlist = account.dmAllowlist
+    .map((ship) => ship.startsWith("~") ? ship : `~${ship}`);
+
+  // Check if sender is in allowlist
+  return normalizedAllowlist.includes(normalizedSender);
+}
+
+/**
  * Extracts text content from Tlon message structure
  */
 function extractMessageText(content) {
@@ -318,6 +339,14 @@ export async function monitorTlonProvider(opts = {}) {
 
       const messageText = extractMessageText(memo.content);
       if (!messageText) return;
+
+      // Check DM access control
+      if (!isDmAllowed(senderShip, account)) {
+        runtime.log?.(
+          `[tlon] Blocked DM from ${senderShip}: not in allowed list`
+        );
+        return;
+      }
 
       runtime.log?.(
         `[tlon] Received DM from ${senderShip}: "${messageText.slice(0, 50)}..."`

@@ -60,11 +60,33 @@ Edit `~/.clawdbot/clawdbot.json`:
       "enabled": true,
       "ship": "your-ship-name",
       "code": "your-ship-code",
-      "url": "https://your-ship-name.tlon.network"
+      "url": "https://your-ship-name.tlon.network",
+      "dmAllowlist": ["~friend-ship-1", "~friend-ship-2"]
     }
   }
 }
 ```
+
+**DM Allowlist (Optional):**
+
+By default, the bot accepts DMs from any ship. To restrict DMs to specific ships, add a `dmAllowlist` array:
+
+- If `dmAllowlist` is omitted or empty, all DMs are accepted
+- Ship names can include or omit the `~` prefix (both work)
+- Example configuration:
+  ```json
+  {
+    "channels": {
+      "tlon": {
+        "enabled": true,
+        "ship": "your-ship-name",
+        "code": "your-ship-code",
+        "url": "https://your-ship-name.tlon.network",
+        "dmAllowlist": ["~trusted-friend", "~another-trusted-ship"]
+      }
+    }
+  }
+  ```
 
 **For localhost development:**
 ```json
