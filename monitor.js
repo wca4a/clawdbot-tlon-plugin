@@ -319,15 +319,11 @@ export async function monitorTlonProvider(opts = {}) {
       const messageText = extractMessageText(memo.content);
       if (!messageText) return;
 
-      // Check if bot is mentioned
-      const mentioned = isBotMentioned(messageText, botShipName);
-
       runtime.log?.(
-        `[tlon] Received DM from ${senderShip}: "${messageText.slice(0, 50)}..." (mentioned: ${mentioned})`
+        `[tlon] Received DM from ${senderShip}: "${messageText.slice(0, 50)}..."`
       );
 
-      // Only process if bot is mentioned
-      if (!mentioned) return;
+      // All DMs are processed (no mention check needed)
 
       await processMessage({
         messageId,
