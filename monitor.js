@@ -707,16 +707,18 @@ export async function monitorTlonProvider(opts = {}) {
       // Check for new group channels (if auto-discovery is enabled)
       if (account.autoDiscoverChannels !== false) {
         const discoveredChannels = await fetchAllChannels(api, runtime);
-        for (const channelNest of discoveredChannels) {
-          await subscribeToChannel(channelNest);
+
+        // Find truly new channels (not already subscribed)
+        const newChannels = discoveredChannels.filter(c => !subscribedChannels.has(c));
+
+        if (newChannels.length > 0) {
+          runtime.log?.(`[tlon] 🆕 Discovered ${newChannels.length} new channel(s):`);
+          newChannels.forEach(c => runtime.log?.(`[tlon]   - ${c}`));
         }
 
-        // Log if we found new channels
-        const newChannelsCount = discoveredChannels.filter(
-          c => !subscribedChannels.has(c)
-        ).length;
-        if (newChannelsCount > 0) {
-          runtime.log?.(`[tlon] Discovered ${newChannelsCount} new channel(s)`);
+        // Subscribe to all discovered channels (including new ones)
+        for (const channelNest of discoveredChannels) {
+          await subscribeToChannel(channelNest);
         }
       }
     } catch (error) {
