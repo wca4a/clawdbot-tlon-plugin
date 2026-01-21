@@ -21,6 +21,8 @@ import { unixToDa, formatUd } from "@urbit/aura";
 import { UrbitSSEClient } from "./urbit-sse-client.js";
 import { loadCoreChannelDeps } from "./core-bridge.js";
 
+console.log("[tlon] ====== monitor.js loaded with thread reply fix (commit 879eb1f) ======");
+
 /**
  * Formats model name for display in signature
  * Converts "anthropic/claude-sonnet-4-5" to "Claude Sonnet 4.5"
@@ -607,8 +609,15 @@ export async function monitorTlonProvider(opts = {}) {
       const content = memo || essay;
       const isThreadReply = !!memo;
 
-      const messageId = update.response.post.id;
-      if (processedMessages.has(messageId)) return;
+      // For thread replies, use the reply ID, not the parent post ID
+      const messageId = isThreadReply
+        ? update.response.post["r-post"]?.reply?.id
+        : update.response.post.id;
+
+      if (processedMessages.has(messageId)) {
+        runtime.log?.(`[tlon] Skipping duplicate message ${messageId}`);
+        return;
+      }
       processedMessages.add(messageId);
 
       const senderShip = content.author?.startsWith("~")
