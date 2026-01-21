@@ -250,6 +250,74 @@ Bot: Quantum computing uses quantum mechanics principles like superposition
 
 When using the [AI fallback system](./FALLBACK.md), signatures automatically reflect which model generated the response (e.g., if Anthropic is rate limited and OpenAI is used, the signature will show `GPT-4o`).
 
+### Channel History Summarization
+
+The bot can summarize recent channel activity when asked. This is useful for catching up on conversations you missed.
+
+**Trigger phrases:**
+- `~bot-ship summarize this channel`
+- `~bot-ship what did I miss?`
+- `~bot-ship catch me up`
+- `~bot-ship tldr`
+- `~bot-ship channel summary`
+
+**Example:**
+```
+User: ~sitrul-nacwyl what did I miss?
+Bot: Here's a summary of the last 50 messages:
+
+Main topics discussed:
+1. Discussion about Urbit networking (Ames protocol)
+2. Planning for next week's developer meetup
+3. Bug reports for the new UI update
+
+Key decisions:
+- Meetup scheduled for Thursday at 3pm EST
+- Priority on fixing the scrolling issue
+
+Notable participants: ~malmur-halmex, ~bolbex-fogdys
+```
+
+**How it works:**
+- Fetches the last 50 messages from the channel
+- Sends them to the AI for summarization
+- Returns a concise summary with main topics, decisions, and action items
+
+### Thread Support
+
+The bot automatically maintains context in threaded conversations. When you mention the bot in a reply thread, it will respond within that thread instead of posting to the main channel.
+
+**Example:**
+```
+Main channel post:
+  User A: ~sitrul-nacwyl what's the capital of France?
+  Bot: Paris is the capital of France.
+    └─ User B (in thread): ~sitrul-nacwyl and what's its population?
+       └─ Bot (in thread): Paris has a population of approximately 2.2 million...
+```
+
+**Benefits:**
+- Keeps conversations organized
+- Reduces noise in main channel
+- Maintains conversation context within threads
+
+**Note:** Thread support is automatic - no configuration needed.
+
+### Link Summarization
+
+The bot can fetch and summarize web content when you share links.
+
+**Example:**
+```
+User: ~sitrul-nacwyl can you summarize this https://example.com/article
+Bot: This article discusses... [summary of the content]
+```
+
+**How it works:**
+- Bot extracts URLs from rich text messages (including inline links)
+- Fetches the web page content
+- Summarizes using the WebFetch tool
+
 ### Channel Authorization
 
 Control which ships can invoke the bot in specific group channels. **New channels default to `restricted` mode** for security.

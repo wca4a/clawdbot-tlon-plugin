@@ -115,15 +115,31 @@ async function sendDm(api, fromShip, toShip, text) {
 
 /**
  * Sends a message to a group channel
+ * @param {string} replyTo - Optional parent post ID for threading
  */
-async function sendGroupMessage(api, fromShip, hostShip, channelName, text) {
+async function sendGroupMessage(api, fromShip, hostShip, channelName, text, replyTo = null) {
   const story = [{ inline: [text] }];
   const sentAt = Date.now();
 
   const action = {
     channel: {
       nest: `chat/${hostShip}/${channelName}`,
-      action: {
+      action: replyTo ? {
+        // Reply action for threading
+        reply: {
+          id: replyTo,
+          delta: {
+            add: {
+              memo: {
+                content: story,
+                author: fromShip,
+                sent: sentAt,
+              }
+            }
+          }
+        }
+      } : {
+        // Regular post action
         post: {
           add: {
             content: story,
@@ -228,6 +244,63 @@ function parseChannelNest(nest) {
     hostShip: parts[1],
     channelName: parts[2],
   };
+}
+
+/**
+ * Fetches recent channel history
+ */
+async function fetchChannelHistory(api, shipUrl, cookie, channelNest, count = 50) {
+  try {
+    // Scry channel posts using direct HTTP fetch
+    const scryPath = `/~/scry/channels/posts/${channelNest}.json`;
+    const url = `${shipUrl}${scryPath}`;
+
+    const response = await fetch(url, {
+      headers: {
+        Cookie: cookie,
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`[tlon] Scry failed: ${response.status} ${response.statusText}`);
+      return [];
+    }
+
+    const data = await response.json();
+
+    if (!data || !data.posts) {
+      return [];
+    }
+
+    // Extract and sort posts by timestamp
+    const posts = Object.values(data.posts)
+      .sort((a, b) => b.essay.sent - a.essay.sent)
+      .slice(0, count);
+
+    return posts.map(post => ({
+      author: post.essay.author,
+      content: extractMessageText(post.essay.content),
+      timestamp: post.essay.sent,
+      id: post.seal?.id,
+    }));
+  } catch (error) {
+    console.error(`[tlon] Error fetching channel history: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Detects if a message is a summarization request
+ */
+function isSummarizationRequest(messageText) {
+  const patterns = [
+    /summarize\s+(this\s+)?(channel|chat|conversation)/i,
+    /what\s+did\s+i\s+miss/i,
+    /catch\s+me\s+up/i,
+    /channel\s+summary/i,
+    /tldr/i,
+  ];
+  return patterns.some(pattern => pattern.test(messageText));
 }
 
 /**
@@ -484,6 +557,11 @@ export async function monitorTlonProvider(opts = {}) {
         );
       }
 
+      // Extract seal data for thread support
+      const seal = update?.response?.post?.["r-post"]?.set?.seal;
+      const parentId = seal?.parent || null; // Parent post ID if this is a reply
+      const postType = update?.response?.post?.["r-post"]?.set?.type;
+
       await processMessage({
         messageId,
         senderShip,
@@ -492,6 +570,9 @@ export async function monitorTlonProvider(opts = {}) {
         groupChannel: channelNest,
         groupName: `${hostShip}/${channelName}`,
         timestamp: essay.sent || Date.now(),
+        parentId,
+        postType,
+        seal,
       });
     } catch (error) {
       runtime.error?.(
@@ -515,9 +596,67 @@ export async function monitorTlonProvider(opts = {}) {
       groupChannel,
       groupName,
       timestamp,
+      parentId,
+      postType,
+      seal,
     } = params;
 
     runtime.log?.(`[tlon] processMessage called for ${senderShip}, isGroup: ${isGroup}, message: "${messageText.substring(0, 50)}"`);
+
+    // Check if this is a summarization request
+    if (isGroup && isSummarizationRequest(messageText)) {
+      runtime.log?.(`[tlon] Detected summarization request in ${groupChannel}`);
+      try {
+        const history = await fetchChannelHistory(api, account.url, cookie, groupChannel, 50);
+        if (history.length === 0) {
+          const noHistoryMsg = "I couldn't fetch the channel history. The channel might be empty or there might be a permissions issue.";
+          if (isGroup) {
+            const parsed = parseChannelNest(groupChannel);
+            if (parsed) {
+              await sendGroupMessage(
+                api,
+                botShipName,
+                parsed.hostShip,
+                parsed.channelName,
+                noHistoryMsg
+              );
+            }
+          } else {
+            await sendDm(api, botShipName, senderShip, noHistoryMsg);
+          }
+          return;
+        }
+
+        // Format history for AI
+        const historyText = history
+          .map(msg => `[${new Date(msg.timestamp).toLocaleString()}] ${msg.author}: ${msg.content}`)
+          .join("\n");
+
+        const summaryPrompt = `Please summarize this channel conversation (${history.length} recent messages):\n\n${historyText}\n\nProvide a concise summary highlighting:\n1. Main topics discussed\n2. Key decisions or conclusions\n3. Action items if any\n4. Notable participants`;
+
+        // Override message text with summary prompt
+        params.messageText = summaryPrompt;
+        runtime.log?.(`[tlon] Generating summary for ${history.length} messages`);
+      } catch (error) {
+        runtime.error?.(`[tlon] Error generating summary: ${error.message}`);
+        const errorMsg = `Sorry, I encountered an error while fetching the channel history: ${error.message}`;
+        if (isGroup) {
+          const parsed = parseChannelNest(groupChannel);
+          if (parsed) {
+            await sendGroupMessage(
+              api,
+              botShipName,
+              parsed.hostShip,
+              parsed.channelName,
+              errorMsg
+            );
+          }
+        } else {
+          await sendDm(api, botShipName, senderShip, errorMsg);
+        }
+        return;
+      }
+    }
 
     try {
       // Resolve agent route
@@ -612,21 +751,27 @@ export async function monitorTlonProvider(opts = {}) {
             );
 
             // Debug delivery path
-            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}`);
+            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}, parentId=${parentId}`);
 
             // Send reply back to Tlon
             if (isGroup) {
               const parsed = parseChannelNest(groupChannel);
               runtime.log?.(`[tlon] 🔍 Parsed channel nest: ${JSON.stringify(parsed)}`);
               if (parsed) {
+                // Reply in thread if this message is part of a thread
+                if (parentId) {
+                  runtime.log?.(`[tlon] Replying in thread (parent: ${parentId})`);
+                }
                 await sendGroupMessage(
                   api,
                   botShipName,
                   parsed.hostShip,
                   parsed.channelName,
-                  replyText
+                  replyText,
+                  parentId // Pass parentId for thread support
                 );
-                runtime.log?.(`[tlon] Delivered AI reply to group ${groupName}`);
+                const threadInfo = parentId ? ` (in thread)` : '';
+                runtime.log?.(`[tlon] Delivered AI reply to group ${groupName}${threadInfo}`);
               } else {
                 runtime.log?.(`[tlon] ⚠️ Failed to parse channel nest: ${groupChannel}`);
               }
