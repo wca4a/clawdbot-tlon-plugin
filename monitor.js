@@ -417,6 +417,43 @@ export async function monitorTlonProvider(opts = {}) {
       // Only process if bot is mentioned
       if (!mentioned) return;
 
+      // Check channel authorization
+      const tlonConfig = opts.cfg?.channels?.tlon;
+      const authorization = tlonConfig?.authorization || {};
+      const channelRules = authorization.channelRules || {};
+      const defaultAuthorizedShips = tlonConfig?.defaultAuthorizedShips || ["~malmur-halmex"];
+
+      // Get channel rule or use default (restricted)
+      const channelRule = channelRules[channelNest];
+      const mode = channelRule?.mode || "restricted"; // Default to restricted
+      const allowedShips = channelRule?.allowedShips || defaultAuthorizedShips;
+
+      // Normalize sender ship (ensure it has ~)
+      const normalizedSender = senderShip.startsWith("~") ? senderShip : `~${senderShip}`;
+
+      // Check authorization for restricted channels
+      if (mode === "restricted") {
+        const isAuthorized = allowedShips.some(ship => {
+          const normalizedAllowed = ship.startsWith("~") ? ship : `~${ship}`;
+          return normalizedAllowed === normalizedSender;
+        });
+
+        if (!isAuthorized) {
+          runtime.log?.(
+            `[tlon] ⛔ Access denied: ${normalizedSender} in ${channelNest} (restricted, allowed: ${allowedShips.join(", ")})`
+          );
+          return;
+        }
+
+        runtime.log?.(
+          `[tlon] ✅ Access granted: ${normalizedSender} in ${channelNest} (authorized user)`
+        );
+      } else {
+        runtime.log?.(
+          `[tlon] ✅ Access granted: ${normalizedSender} in ${channelNest} (open channel)`
+        );
+      }
+
       await processMessage({
         messageId,
         senderShip,
