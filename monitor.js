@@ -272,25 +272,12 @@ function cacheMessage(channelNest, message) {
 
 /**
  * Fetches channel history from Urbit via scry
- * Format: /~/scry/channels/v4/<channel-nest>/posts/newest/<count>/outline.json
+ * Format: /channels/v4/<channel-nest>/posts/newest/<count>/outline.json
  */
-async function fetchChannelHistory(shipUrl, cookie, channelNest, count = 50) {
+async function fetchChannelHistory(api, channelNest, count = 50) {
   try {
-    const scryPath = `/~/scry/channels/v4/${channelNest}/posts/newest/${count}/outline.json`;
-    const url = `${shipUrl}${scryPath}`;
-
-    const response = await fetch(url, {
-      headers: {
-        Cookie: cookie,
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`[tlon] Scry failed: ${response.status} ${response.statusText}`);
-      return [];
-    }
-
-    const data = await response.json();
+    const scryPath = `/channels/v4/${channelNest}/posts/newest/${count}/outline.json`;
+    const data = await api.scry(scryPath);
 
     if (!data || !Array.isArray(data)) {
       return [];
@@ -312,7 +299,7 @@ async function fetchChannelHistory(shipUrl, cookie, channelNest, count = 50) {
 /**
  * Gets recent channel history (tries cache first, then scry)
  */
-async function getChannelHistory(shipUrl, cookie, channelNest, count = 50) {
+async function getChannelHistory(api, channelNest, count = 50) {
   // Try cache first for speed
   const cache = messageCache.get(channelNest) || [];
   if (cache.length >= count) {
@@ -320,7 +307,7 @@ async function getChannelHistory(shipUrl, cookie, channelNest, count = 50) {
   }
 
   // Fall back to scry for full history
-  return await fetchChannelHistory(shipUrl, cookie, channelNest, count);
+  return await fetchChannelHistory(api, channelNest, count);
 }
 
 /**
@@ -698,7 +685,7 @@ export async function monitorTlonProvider(opts = {}) {
     if (isGroup && isSummarizationRequest(messageText)) {
       runtime.log?.(`[tlon] Detected summarization request in ${groupChannel}`);
       try {
-        const history = await getChannelHistory(account.url, cookie, groupChannel, 50);
+        const history = await getChannelHistory(api, groupChannel, 50);
         if (history.length === 0) {
           const noHistoryMsg = "I couldn't fetch any messages for this channel. It might be empty or there might be a permissions issue.";
           if (isGroup) {
