@@ -181,7 +181,8 @@ function extractMessageText(content) {
             if (item && typeof item === "object") {
               if (item.ship) return item.ship; // Ship mention
               if (item.break !== undefined) return "\n"; // Line break
-              // Skip other objects
+              if (item.link && item.link.href) return item.link.href; // URL link
+              // Skip other objects (images, etc.)
             }
             return "";
           })
@@ -581,9 +582,13 @@ export async function monitorTlonProvider(opts = {}) {
               `[tlon] AI response received (took ${dispatchDuration}ms), sending to Tlon...`
             );
 
+            // Debug delivery path
+            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}`);
+
             // Send reply back to Tlon
             if (isGroup) {
               const parsed = parseChannelNest(groupChannel);
+              runtime.log?.(`[tlon] 🔍 Parsed channel nest: ${JSON.stringify(parsed)}`);
               if (parsed) {
                 await sendGroupMessage(
                   api,
@@ -593,6 +598,8 @@ export async function monitorTlonProvider(opts = {}) {
                   replyText
                 );
                 runtime.log?.(`[tlon] Delivered AI reply to group ${groupName}`);
+              } else {
+                runtime.log?.(`[tlon] ⚠️ Failed to parse channel nest: ${groupChannel}`);
               }
             } else {
               await sendDm(api, botShipName, senderShip, replyText);
