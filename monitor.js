@@ -247,46 +247,35 @@ function parseChannelNest(nest) {
 }
 
 /**
- * Fetches recent channel history
+ * Message cache for channel history
+ * Structure: Map<channelNest, Array<{author, content, timestamp, id}>>
  */
-async function fetchChannelHistory(api, shipUrl, cookie, channelNest, count = 50) {
-  try {
-    // Scry channel posts using direct HTTP fetch
-    const scryPath = `/~/scry/channels/posts/${channelNest}.json`;
-    const url = `${shipUrl}${scryPath}`;
+const messageCache = new Map();
+const MAX_CACHED_MESSAGES = 100;
 
-    const response = await fetch(url, {
-      headers: {
-        Cookie: cookie,
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`[tlon] Scry failed: ${response.status} ${response.statusText}`);
-      return [];
-    }
-
-    const data = await response.json();
-
-    if (!data || !data.posts) {
-      return [];
-    }
-
-    // Extract and sort posts by timestamp
-    const posts = Object.values(data.posts)
-      .sort((a, b) => b.essay.sent - a.essay.sent)
-      .slice(0, count);
-
-    return posts.map(post => ({
-      author: post.essay.author,
-      content: extractMessageText(post.essay.content),
-      timestamp: post.essay.sent,
-      id: post.seal?.id,
-    }));
-  } catch (error) {
-    console.error(`[tlon] Error fetching channel history: ${error.message}`);
-    return [];
+/**
+ * Adds a message to the cache
+ */
+function cacheMessage(channelNest, message) {
+  if (!messageCache.has(channelNest)) {
+    messageCache.set(channelNest, []);
   }
+
+  const cache = messageCache.get(channelNest);
+  cache.unshift(message); // Add to front (most recent)
+
+  // Keep only last MAX_CACHED_MESSAGES
+  if (cache.length > MAX_CACHED_MESSAGES) {
+    cache.pop();
+  }
+}
+
+/**
+ * Gets recent channel history from cache
+ */
+function getChannelHistory(channelNest, count = 50) {
+  const cache = messageCache.get(channelNest) || [];
+  return cache.slice(0, count);
 }
 
 /**
@@ -510,6 +499,14 @@ export async function monitorTlonProvider(opts = {}) {
       const messageText = extractMessageText(essay.content);
       if (!messageText) return;
 
+      // Cache this message for history/summarization
+      cacheMessage(channelNest, {
+        author: senderShip,
+        content: messageText,
+        timestamp: essay.sent || Date.now(),
+        id: messageId,
+      });
+
       // Check if bot is mentioned
       const mentioned = isBotMentioned(messageText, botShipName);
 
@@ -607,9 +604,9 @@ export async function monitorTlonProvider(opts = {}) {
     if (isGroup && isSummarizationRequest(messageText)) {
       runtime.log?.(`[tlon] Detected summarization request in ${groupChannel}`);
       try {
-        const history = await fetchChannelHistory(api, account.url, cookie, groupChannel, 50);
+        const history = getChannelHistory(groupChannel, 50);
         if (history.length === 0) {
-          const noHistoryMsg = "I couldn't fetch the channel history. The channel might be empty or there might be a permissions issue.";
+          const noHistoryMsg = "I don't have any cached messages for this channel yet. Send some messages first, then ask me to summarize!";
           if (isGroup) {
             const parsed = parseChannelNest(groupChannel);
             if (parsed) {
