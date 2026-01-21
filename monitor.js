@@ -247,7 +247,7 @@ function parseChannelNest(nest) {
 }
 
 /**
- * Message cache for channel history
+ * Message cache for channel history (for faster access)
  * Structure: Map<channelNest, Array<{author, content, timestamp, id}>>
  */
 const messageCache = new Map();
@@ -271,11 +271,56 @@ function cacheMessage(channelNest, message) {
 }
 
 /**
- * Gets recent channel history from cache
+ * Fetches channel history from Urbit via scry
+ * Format: /~/scry/channels/v4/<channel-nest>/posts/newest/<count>/outline.json
  */
-function getChannelHistory(channelNest, count = 50) {
+async function fetchChannelHistory(shipUrl, cookie, channelNest, count = 50) {
+  try {
+    const scryPath = `/~/scry/channels/v4/${channelNest}/posts/newest/${count}/outline.json`;
+    const url = `${shipUrl}${scryPath}`;
+
+    const response = await fetch(url, {
+      headers: {
+        Cookie: cookie,
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`[tlon] Scry failed: ${response.status} ${response.statusText}`);
+      return [];
+    }
+
+    const data = await response.json();
+
+    if (!data || !Array.isArray(data)) {
+      return [];
+    }
+
+    // Extract posts from outline format
+    return data.map(item => ({
+      author: item.essay?.author || 'unknown',
+      content: extractMessageText(item.essay?.content || []),
+      timestamp: item.essay?.sent || Date.now(),
+      id: item.seal?.id,
+    })).filter(msg => msg.content); // Filter out empty messages
+  } catch (error) {
+    console.error(`[tlon] Error fetching channel history: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Gets recent channel history (tries cache first, then scry)
+ */
+async function getChannelHistory(shipUrl, cookie, channelNest, count = 50) {
+  // Try cache first for speed
   const cache = messageCache.get(channelNest) || [];
-  return cache.slice(0, count);
+  if (cache.length >= count) {
+    return cache.slice(0, count);
+  }
+
+  // Fall back to scry for full history
+  return await fetchChannelHistory(shipUrl, cookie, channelNest, count);
 }
 
 /**
@@ -604,9 +649,9 @@ export async function monitorTlonProvider(opts = {}) {
     if (isGroup && isSummarizationRequest(messageText)) {
       runtime.log?.(`[tlon] Detected summarization request in ${groupChannel}`);
       try {
-        const history = getChannelHistory(groupChannel, 50);
+        const history = await getChannelHistory(account.url, cookie, groupChannel, 50);
         if (history.length === 0) {
-          const noHistoryMsg = "I don't have any cached messages for this channel yet. Send some messages first, then ask me to summarize!";
+          const noHistoryMsg = "I couldn't fetch any messages for this channel. It might be empty or there might be a permissions issue.";
           if (isGroup) {
             const parsed = parseChannelNest(groupChannel);
             if (parsed) {
