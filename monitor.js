@@ -273,25 +273,56 @@ function cacheMessage(channelNest, message) {
 /**
  * Fetches channel history from Urbit via scry
  * Format: /channels/v4/<channel-nest>/posts/newest/<count>/outline.json
+ * Returns pagination object: { newest, posts: {...}, total, newer, older }
  */
-async function fetchChannelHistory(api, channelNest, count = 50) {
+async function fetchChannelHistory(api, channelNest, count = 50, runtime) {
   try {
     const scryPath = `/channels/v4/${channelNest}/posts/newest/${count}/outline.json`;
-    const data = await api.scry(scryPath);
+    runtime?.log?.(`[tlon] Fetching history: ${scryPath}`);
 
-    if (!data || !Array.isArray(data)) {
+    const data = await api.scry(scryPath);
+    runtime?.log?.(`[tlon] Scry returned data type: ${Array.isArray(data) ? 'array' : typeof data}, keys: ${typeof data === 'object' ? Object.keys(data).slice(0, 5).join(', ') : 'N/A'}`);
+
+    if (!data) {
+      runtime?.log?.(`[tlon] Data is null`);
       return [];
     }
 
+    // Extract posts from pagination object
+    let posts = [];
+    if (Array.isArray(data)) {
+      // Direct array of posts
+      posts = data;
+    } else if (data.posts && typeof data.posts === 'object') {
+      // Pagination object with posts property (keyed by ID)
+      posts = Object.values(data.posts);
+      runtime?.log?.(`[tlon] Extracted ${posts.length} posts from pagination object`);
+    } else if (typeof data === 'object') {
+      // Fallback: treat as keyed object
+      posts = Object.values(data);
+    }
+
+    runtime?.log?.(`[tlon] Processing ${posts.length} posts`);
+
     // Extract posts from outline format
-    return data.map(item => ({
-      author: item.essay?.author || 'unknown',
-      content: extractMessageText(item.essay?.content || []),
-      timestamp: item.essay?.sent || Date.now(),
-      id: item.seal?.id,
-    })).filter(msg => msg.content); // Filter out empty messages
+    const messages = posts.map(item => {
+      // Handle both post and r-post structures
+      const essay = item.essay || item['r-post']?.set?.essay;
+      const seal = item.seal || item['r-post']?.set?.seal;
+
+      return {
+        author: essay?.author || 'unknown',
+        content: extractMessageText(essay?.content || []),
+        timestamp: essay?.sent || Date.now(),
+        id: seal?.id,
+      };
+    }).filter(msg => msg.content); // Filter out empty messages
+
+    runtime?.log?.(`[tlon] Extracted ${messages.length} messages from history`);
+    return messages;
   } catch (error) {
-    console.error(`[tlon] Error fetching channel history: ${error.message}`);
+    runtime?.log?.(`[tlon] Error fetching channel history: ${error.message}`);
+    console.error(`[tlon] Error fetching channel history: ${error.message}`, error.stack);
     return [];
   }
 }
@@ -299,15 +330,17 @@ async function fetchChannelHistory(api, channelNest, count = 50) {
 /**
  * Gets recent channel history (tries cache first, then scry)
  */
-async function getChannelHistory(api, channelNest, count = 50) {
+async function getChannelHistory(api, channelNest, count = 50, runtime) {
   // Try cache first for speed
   const cache = messageCache.get(channelNest) || [];
   if (cache.length >= count) {
+    runtime?.log?.(`[tlon] Using cached messages (${cache.length} available)`);
     return cache.slice(0, count);
   }
 
+  runtime?.log?.(`[tlon] Cache has ${cache.length} messages, need ${count}, fetching from scry...`);
   // Fall back to scry for full history
-  return await fetchChannelHistory(api, channelNest, count);
+  return await fetchChannelHistory(api, channelNest, count, runtime);
 }
 
 /**
@@ -559,32 +592,40 @@ export async function monitorTlonProvider(opts = {}) {
 
       const { hostShip, channelName } = parsed;
 
-      // Handle new group event format: response.post.r-post.set.essay
+      // Handle both top-level posts and thread replies
+      // Top-level: response.post.r-post.set.essay
+      // Thread reply: response.post.r-post.reply.r-reply.set.memo
       const essay = update?.response?.post?.["r-post"]?.set?.essay;
-      if (!essay) {
-        runtime.log?.(`[tlon] Group update has no essay in response.post.r-post.set`);
+      const memo = update?.response?.post?.["r-post"]?.reply?.["r-reply"]?.set?.memo;
+
+      if (!essay && !memo) {
+        runtime.log?.(`[tlon] Group update has neither essay nor memo`);
         return;
       }
+
+      // Use memo for thread replies, essay for top-level posts
+      const content = memo || essay;
+      const isThreadReply = !!memo;
 
       const messageId = update.response.post.id;
       if (processedMessages.has(messageId)) return;
       processedMessages.add(messageId);
 
-      const senderShip = essay.author?.startsWith("~")
-        ? essay.author
-        : `~${essay.author}`;
+      const senderShip = content.author?.startsWith("~")
+        ? content.author
+        : `~${content.author}`;
 
       // Don't respond to our own messages
       if (senderShip === botShipName) return;
 
-      const messageText = extractMessageText(essay.content);
+      const messageText = extractMessageText(content.content);
       if (!messageText) return;
 
       // Cache this message for history/summarization
       cacheMessage(channelNest, {
         author: senderShip,
         content: messageText,
-        timestamp: essay.sent || Date.now(),
+        timestamp: content.sent || Date.now(),
         id: messageId,
       });
 
@@ -636,9 +677,17 @@ export async function monitorTlonProvider(opts = {}) {
       }
 
       // Extract seal data for thread support
-      const seal = update?.response?.post?.["r-post"]?.set?.seal;
-      const parentId = seal?.parent || null; // Parent post ID if this is a reply
+      // For thread replies, seal is in a different location
+      const seal = isThreadReply
+        ? update?.response?.post?.["r-post"]?.reply?.["r-reply"]?.set?.seal
+        : update?.response?.post?.["r-post"]?.set?.seal;
+
+      const parentId = seal?.["parent-id"] || seal?.parent || null; // Parent post ID if this is a reply
       const postType = update?.response?.post?.["r-post"]?.set?.type;
+
+      runtime.log?.(
+        `[tlon] Message type: ${isThreadReply ? "thread reply" : "top-level post"}, parentId: ${parentId}`
+      );
 
       await processMessage({
         messageId,
@@ -647,7 +696,7 @@ export async function monitorTlonProvider(opts = {}) {
         isGroup: true,
         groupChannel: channelNest,
         groupName: `${hostShip}/${channelName}`,
-        timestamp: essay.sent || Date.now(),
+        timestamp: content.sent || Date.now(),
         parentId,
         postType,
         seal,
@@ -666,7 +715,7 @@ export async function monitorTlonProvider(opts = {}) {
    * Process a message and generate AI response
    */
   const processMessage = async (params) => {
-    const {
+    let {
       messageId,
       senderShip,
       messageText,
@@ -685,7 +734,7 @@ export async function monitorTlonProvider(opts = {}) {
     if (isGroup && isSummarizationRequest(messageText)) {
       runtime.log?.(`[tlon] Detected summarization request in ${groupChannel}`);
       try {
-        const history = await getChannelHistory(api, groupChannel, 50);
+        const history = await getChannelHistory(api, groupChannel, 50, runtime);
         if (history.length === 0) {
           const noHistoryMsg = "I couldn't fetch any messages for this channel. It might be empty or there might be a permissions issue.";
           if (isGroup) {
@@ -713,7 +762,7 @@ export async function monitorTlonProvider(opts = {}) {
         const summaryPrompt = `Please summarize this channel conversation (${history.length} recent messages):\n\n${historyText}\n\nProvide a concise summary highlighting:\n1. Main topics discussed\n2. Key decisions or conclusions\n3. Action items if any\n4. Notable participants`;
 
         // Override message text with summary prompt
-        params.messageText = summaryPrompt;
+        messageText = summaryPrompt;
         runtime.log?.(`[tlon] Generating summary for ${history.length} messages`);
       } catch (error) {
         runtime.error?.(`[tlon] Error generating summary: ${error.message}`);
