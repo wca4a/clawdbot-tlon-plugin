@@ -1,11 +1,11 @@
 # Clawdbot Tlon/Urbit Integration
 
-Complete documentation for integrating Clawdbot with Tlon messenger (Urbit-based platform).
+Complete documentation for integrating Clawdbot with Tlon Messenger (built on Urbit).
 
 ## Overview
 
 This extension enables Clawdbot to:
-- Monitor and respond to direct messages on Tlon/Urbit
+- Monitor and respond to direct messages on Tlon Messenger 
 - Monitor and respond to group channel messages when mentioned
 - Auto-discover available group channels
 - Use per-conversation subscriptions for reliable message delivery
@@ -28,7 +28,7 @@ This extension enables Clawdbot to:
 ### How It Works
 
 1. **Authentication**: Uses ship name + code to authenticate via `/~/login` endpoint
-2. **Channel Creation**: Creates Urbit channel via PUT to `/~/channel/{uid}`
+2. **Channel Creation**: Creates Tlon Messenger channel via PUT to `/~/channel/{uid}`
 3. **Activation**: Sends "helm-hi" poke to activate channel (required!)
 4. **Subscriptions**:
    - **DMs**: Individual subscriptions to `/dm/{ship}` for each conversation
