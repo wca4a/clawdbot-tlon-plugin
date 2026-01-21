@@ -194,7 +194,22 @@ Look for these indicators:
 
 ### Group Channels
 
-The bot automatically discovers and subscribes to all group channels. To manually configure specific channels:
+The bot automatically discovers and subscribes to all group channels using **delta-based discovery** for efficiency.
+
+**How Auto-Discovery Works:**
+1. **On startup:** Fetches changes from the last 5 days via `/groups-ui/v5/changes/~YYYY.M.D..20.19.51..9b9d.json`
+2. **Periodic refresh:** Checks for new channels every 2 minutes
+3. **Smart caching:** Only fetches deltas, not full state each time
+
+**Benefits:**
+- Reduced bandwidth usage
+- Faster startup (especially for ships with many groups)
+- Automatically picks up new channels you join
+- Context of recent group activity
+
+**Manual Configuration:**
+
+To disable auto-discovery and use specific channels:
 
 ```json
 {

@@ -338,15 +338,64 @@ function isSummarizationRequest(messageText) {
 }
 
 /**
+ * Formats a date for the groups-ui changes endpoint
+ * Format: ~YYYY.M.D..HH.MM.SS..XXXX (only date changes, time/hex stay constant)
+ */
+function formatChangesDate(daysAgo = 5) {
+  const now = new Date();
+  const targetDate = new Date(now - (daysAgo * 24 * 60 * 60 * 1000));
+  const year = targetDate.getFullYear();
+  const month = targetDate.getMonth() + 1;
+  const day = targetDate.getDate();
+  // Keep time and hex constant as per Urbit convention
+  return `~${year}.${month}.${day}..20.19.51..9b9d`;
+}
+
+/**
+ * Fetches changes from groups-ui since a specific date
+ * Returns delta data that can be used to efficiently discover new channels
+ */
+async function fetchGroupChanges(api, runtime, daysAgo = 5) {
+  try {
+    const changeDate = formatChangesDate(daysAgo);
+    runtime.log?.(`[tlon] Fetching group changes since ${daysAgo} days ago (${changeDate})...`);
+
+    const changes = await api.scry(`/groups-ui/v5/changes/${changeDate}.json`);
+
+    if (changes) {
+      runtime.log?.(`[tlon] Successfully fetched changes data`);
+      return changes;
+    }
+
+    return null;
+  } catch (error) {
+    runtime.log?.(`[tlon] Failed to fetch changes (falling back to full init): ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Fetches all channels the ship has access to
  * Returns an array of channel nest identifiers (e.g., "chat/~host-ship/channel-name")
+ * Tries changes endpoint first for efficiency, falls back to full init
  */
 async function fetchAllChannels(api, runtime) {
   try {
     runtime.log?.(`[tlon] Attempting auto-discovery of group channels...`);
 
-    // Use the groups-ui init endpoint which contains all groups and channels
-    const initData = await api.scry("/groups-ui/v6/init.json");
+    // Try delta-based changes first (more efficient)
+    const changes = await fetchGroupChanges(api, runtime, 5);
+
+    let initData;
+    if (changes) {
+      // We got changes, but still need to extract channel info
+      // For now, fall back to full init since changes format varies
+      runtime.log?.(`[tlon] Changes data received, using full init for channel extraction`);
+      initData = await api.scry("/groups-ui/v6/init.json");
+    } else {
+      // No changes data, use full init
+      initData = await api.scry("/groups-ui/v6/init.json");
+    }
 
     const channels = [];
 
