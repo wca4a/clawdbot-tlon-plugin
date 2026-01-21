@@ -732,8 +732,7 @@ if (channelNest.startsWith("chat/")) {
 
 ## Credits
 
-Built for integrating Clawdbot with Tlon/Urbit messenger.
+Built for integrating Clawdbot with Tlon messenger.
 
-**Ship:** ~sitrul-nacwyl
 **Developer:** Claude (Sonnet 4.5)
-**Platform:** Tlon/Urbit
+**Platform:** Tlon Messenger built on Urbit
