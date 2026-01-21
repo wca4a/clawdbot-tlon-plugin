@@ -316,6 +316,13 @@ Main channel post:
 - Reduces noise in main channel
 - Maintains conversation context within threads
 
+**Technical Details:**
+The bot handles both top-level posts and thread replies with different data structures:
+- Top-level posts: `response.post.r-post.set.essay`
+- Thread replies: `response.post.r-post.reply.r-reply.set.memo`
+
+When replying in a thread, the bot uses the `parent-id` from the incoming message to ensure the reply stays within the same thread.
+
 **Note:** Thread support is automatic - no configuration needed.
 
 ### Link Summarization
