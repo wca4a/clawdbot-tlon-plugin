@@ -1,4 +1,4 @@
-# Clawdbot Tlon/Urbit Integration
+# Clawdbot Tlon Messenger Integration
 
 Complete documentation for integrating Clawdbot with Tlon Messenger (built on Urbit).
 
