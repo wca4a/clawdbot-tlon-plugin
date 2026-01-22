@@ -127,14 +127,16 @@ async function sendGroupMessage(api, fromShip, hostShip, channelName, text, repl
     channel: {
       nest: `chat/${hostShip}/${channelName}`,
       action: replyTo ? {
-        // Reply action for threading (matches official Tlon client structure)
-        reply: {
-          id: replyTo,
-          action: {
-            add: {
-              content: story,
-              author: fromShip,
-              sent: sentAt,
+        // Reply action for threading (wraps reply in post like official client)
+        post: {
+          reply: {
+            id: replyTo,
+            action: {
+              add: {
+                content: story,
+                author: fromShip,
+                sent: sentAt,
+              }
             }
           }
         }
