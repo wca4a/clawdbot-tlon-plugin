@@ -127,16 +127,14 @@ async function sendGroupMessage(api, fromShip, hostShip, channelName, text, repl
     channel: {
       nest: `chat/${hostShip}/${channelName}`,
       action: replyTo ? {
-        // Reply action for threading
+        // Reply action for threading (matches official Tlon client structure)
         reply: {
           id: replyTo,
-          delta: {
+          action: {
             add: {
-              memo: {
-                content: story,
-                author: fromShip,
-                sent: sentAt,
-              }
+              content: story,
+              author: fromShip,
+              sent: sentAt,
             }
           }
         }
@@ -158,6 +156,7 @@ async function sendGroupMessage(api, fromShip, hostShip, channelName, text, repl
 
   runtime?.log?.(`[tlon] 📤 Sending message: replyTo=${replyTo}, text="${text.substring(0, 100)}...", nest=chat/${hostShip}/${channelName}`);
   runtime?.log?.(`[tlon] 📤 Action type: ${replyTo ? 'REPLY (thread)' : 'POST (main channel)'}`);
+  runtime?.log?.(`[tlon] 📤 Full action structure: ${JSON.stringify(action, null, 2)}`);
 
   try {
     const pokeResult = await api.poke({
