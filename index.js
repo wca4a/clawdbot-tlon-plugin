@@ -95,6 +95,7 @@ export const tlonPlugin = {
         code: account?.code || null,
         groupChannels: account?.groupChannels || [],
         dmAllowlist: account?.dmAllowlist || [],
+        notebookChannel: account?.notebookChannel || null,
       };
     },
     defaultAccountId: () => "default",

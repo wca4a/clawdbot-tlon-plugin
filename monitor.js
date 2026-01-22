@@ -210,6 +210,191 @@ function isBotMentioned(messageText, botShipName) {
 }
 
 /**
+ * Parses commands related to notebook operations
+ * @param {string} messageText - The message to parse
+ * @returns {Object|null} Command info or null if no command detected
+ */
+function parseNotebookCommand(messageText) {
+  const text = messageText.toLowerCase().trim();
+
+  // Save to notebook patterns
+  const savePatterns = [
+    /save (?:this|that) to (?:my )?notes?/i,
+    /save to (?:my )?notes?/i,
+    /save to notebook/i,
+    /add to (?:my )?diary/i,
+    /save (?:this|that) to (?:my )?diary/i,
+    /save to (?:my )?diary/i,
+    /save (?:this|that)/i,
+  ];
+
+  for (const pattern of savePatterns) {
+    if (pattern.test(text)) {
+      return {
+        type: "save_to_notebook",
+        title: extractTitle(messageText),
+      };
+    }
+  }
+
+  // List notebook patterns
+  const listPatterns = [
+    /(?:list|show) (?:my )?(?:notes?|notebook|diary)/i,
+    /what(?:'s| is) in (?:my )?(?:notes?|notebook|diary)/i,
+    /check (?:my )?(?:notes?|notebook|diary)/i,
+  ];
+
+  for (const pattern of listPatterns) {
+    if (pattern.test(text)) {
+      return {
+        type: "list_notebook",
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extracts a title from a save command
+ * @param {string} text - The message text
+ * @returns {string|null} Extracted title or null
+ */
+function extractTitle(text) {
+  // Try to extract title from "as [title]" or "with title [title]"
+  const asMatch = /(?:as|with title)\s+["']([^"']+)["']/i.exec(text);
+  if (asMatch) return asMatch[1];
+
+  const asMatch2 = /(?:as|with title)\s+(.+?)(?:\.|$)/i.exec(text);
+  if (asMatch2) return asMatch2[1].trim();
+
+  return null;
+}
+
+/**
+ * Sends a post to an Urbit diary channel
+ * @param {Object} api - Authenticated Urbit API instance
+ * @param {Object} account - Account configuration
+ * @param {string} diaryChannel - Diary channel in format "diary/~host/channel-id"
+ * @param {string} title - Post title
+ * @param {string} content - Post content
+ * @returns {Promise<{essayId: string, sentAt: number}>}
+ */
+async function sendDiaryPost(api, account, diaryChannel, title, content) {
+  // Parse channel format: "diary/~host/channel-id"
+  const match = /^diary\/~?([a-z-]+)\/([a-z0-9]+)$/i.exec(diaryChannel);
+
+  if (!match) {
+    throw new Error(`Invalid diary channel format: ${diaryChannel}. Expected: diary/~host/channel-id`);
+  }
+
+  const host = match[1];
+  const channelId = match[2];
+  const nest = `diary/~${host}/${channelId}`;
+
+  // Construct essay (diary entry) format
+  const sentAt = Date.now();
+  const idUd = formatUd(unixToDa(sentAt).toString());
+  const fromShip = account.ship.startsWith("~") ? account.ship : `~${account.ship}`;
+  const essayId = `${fromShip}/${idUd}`;
+
+  const action = {
+    channel: {
+      nest,
+      action: {
+        post: {
+          add: {
+            content: [{ inline: [content] }],
+            sent: sentAt,
+            kind: "/diary",
+            author: fromShip,
+            blob: null,
+            meta: {
+              title: title || "Saved Note",
+              image: "",
+              description: "",
+              cover: "",
+            },
+          },
+        },
+      },
+    },
+  };
+
+  await api.poke({
+    app: "channels",
+    mark: "channel-action-1",
+    json: action,
+  });
+
+  return { essayId, sentAt };
+}
+
+/**
+ * Fetches diary entries from an Urbit diary channel
+ * @param {Object} api - Authenticated Urbit API instance
+ * @param {string} diaryChannel - Diary channel in format "diary/~host/channel-id"
+ * @param {number} limit - Maximum number of entries to fetch (default: 10)
+ * @returns {Promise<Array>} Array of diary entries with { id, title, content, author, sent }
+ */
+async function fetchDiaryEntries(api, diaryChannel, limit = 10) {
+  // Parse channel format: "diary/~host/channel-id"
+  const match = /^diary\/~?([a-z-]+)\/([a-z0-9]+)$/i.exec(diaryChannel);
+
+  if (!match) {
+    throw new Error(`Invalid diary channel format: ${diaryChannel}. Expected: diary/~host/channel-id`);
+  }
+
+  const host = match[1];
+  const channelId = match[2];
+  const nest = `diary/~${host}/${channelId}`;
+
+  try {
+    // Scry the diary channel for posts
+    const response = await api.scry({
+      app: "channels",
+      path: `/channel/${nest}/posts/newest/${limit}`,
+    });
+
+    if (!response || !response.posts) {
+      return [];
+    }
+
+    // Extract and format diary entries
+    const entries = Object.entries(response.posts).map(([id, post]) => {
+      const essay = post.essay || {};
+
+      // Extract text content from prose blocks
+      let content = "";
+      if (essay.content && Array.isArray(essay.content)) {
+        content = essay.content
+          .map((block) => {
+            if (block.block?.prose?.inline) {
+              return block.block.prose.inline.join("");
+            }
+            return "";
+          })
+          .join("\n");
+      }
+
+      return {
+        id,
+        title: essay.title || "Untitled",
+        content,
+        author: essay.author || "unknown",
+        sent: essay.sent || 0,
+      };
+    });
+
+    // Sort by sent time (newest first)
+    return entries.sort((a, b) => b.sent - a.sent);
+  } catch (error) {
+    console.error(`[tlon] Error fetching diary entries from ${nest}:`, error);
+    throw error;
+  }
+}
+
+/**
  * Checks if a ship is allowed to send DMs to the bot
  */
 function isDmAllowed(senderShip, account) {
@@ -561,14 +746,25 @@ export async function monitorTlonProvider(opts = {}) {
     try {
       runtime.log?.(`[tlon] DM handler called with update: ${JSON.stringify(update).substring(0, 200)}`);
 
-      // Handle new DM event format: response.add.memo
-      const memo = update?.response?.add?.memo;
+      // Handle new DM event format: response.add.memo or response.reply.delta.add.memo (for threads)
+      let memo = update?.response?.add?.memo;
+      let parentId = null;
+      let replyId = null;
+
+      // Check if this is a thread reply
+      if (!memo && update?.response?.reply) {
+        memo = update?.response?.reply?.delta?.add?.memo;
+        parentId = update.id; // The parent post ID
+        replyId = update?.response?.reply?.id; // The reply message ID
+        runtime.log?.(`[tlon] Thread reply detected, parent: ${parentId}, reply: ${replyId}`);
+      }
+
       if (!memo) {
-        runtime.log?.(`[tlon] DM update has no memo in response.add`);
+        runtime.log?.(`[tlon] DM update has no memo in response.add or response.reply`);
         return;
       }
 
-      const messageId = update.id;
+      const messageId = replyId || update.id;
       if (processedMessages.has(messageId)) return;
       processedMessages.add(messageId);
 
@@ -576,11 +772,31 @@ export async function monitorTlonProvider(opts = {}) {
         ? memo.author
         : `~${memo.author}`;
 
-      // Don't respond to our own messages
-      if (senderShip === botShipName) return;
-
       const messageText = extractMessageText(memo.content);
       if (!messageText) return;
+
+      // Determine which user's DM cache to use (the other party, not the bot)
+      const otherParty = senderShip === botShipName ? update.whom : senderShip;
+      const dmCacheKey = `dm/${otherParty}`;
+
+      // Cache all DM messages (including bot's own) for history retrieval
+      if (!messageCache.has(dmCacheKey)) {
+        messageCache.set(dmCacheKey, []);
+      }
+      const cache = messageCache.get(dmCacheKey);
+      cache.unshift({
+        id: messageId,
+        author: senderShip,
+        content: messageText,
+        timestamp: memo.sent || Date.now(),
+      });
+      // Keep only last 50 messages
+      if (cache.length > 50) {
+        cache.length = 50;
+      }
+
+      // Don't respond to our own messages
+      if (senderShip === botShipName) return;
 
       // Check DM access control
       if (!isDmAllowed(senderShip, account)) {
@@ -591,7 +807,7 @@ export async function monitorTlonProvider(opts = {}) {
       }
 
       runtime.log?.(
-        `[tlon] Received DM from ${senderShip}: "${messageText.slice(0, 50)}..."`
+        `[tlon] Received DM from ${senderShip}: "${messageText.slice(0, 50)}..."${parentId ? ' (thread reply)' : ''}`
       );
 
       // All DMs are processed (no mention check needed)
@@ -602,6 +818,7 @@ export async function monitorTlonProvider(opts = {}) {
         messageText,
         isGroup: false,
         timestamp: memo.sent || Date.now(),
+        parentId, // Pass parentId for thread replies
       });
     } catch (error) {
       runtime.error?.(`[tlon] Error handling DM: ${error.message}`);
@@ -823,6 +1040,156 @@ export async function monitorTlonProvider(opts = {}) {
         }
         return;
       }
+    }
+
+    // Check if this is a notebook command
+    const notebookCommand = parseNotebookCommand(messageText);
+    if (notebookCommand) {
+      runtime.log?.(`[tlon] Detected notebook command: ${notebookCommand.type}`);
+
+      // Check if notebookChannel is configured
+      const notebookChannel = account.notebookChannel;
+      if (!notebookChannel) {
+        const errorMsg = "Notebook feature is not configured. Please add a 'notebookChannel' to your Tlon account config (e.g., diary/~malmur-halmex/v2u22f1d).";
+        if (isGroup) {
+          const parsed = parseChannelNest(groupChannel);
+          if (parsed) {
+            await sendGroupMessage(api, botShipName, parsed.hostShip, parsed.channelName, errorMsg, parentId, runtime);
+          }
+        } else {
+          await sendDm(api, botShipName, senderShip, errorMsg);
+        }
+        return;
+      }
+
+      // Handle save command
+      if (notebookCommand.type === "save_to_notebook") {
+        try {
+          let noteContent = null;
+          let noteTitle = notebookCommand.title;
+
+          // If replying to a message (thread), save the parent message
+          if (parentId) {
+            runtime.log?.(`[tlon] Fetching parent message ${parentId} to save`);
+
+            // For DMs, use messageCache directly since DM history scry isn't available
+            if (!isGroup) {
+              const dmCacheKey = `dm/${senderShip}`;
+              const cache = messageCache.get(dmCacheKey) || [];
+              const parentMsg = cache.find(msg => msg.id === parentId || msg.id.includes(parentId));
+
+              if (parentMsg) {
+                noteContent = parentMsg.content;
+                if (!noteTitle) {
+                  // Generate title from first line or first 60 chars of content
+                  const firstLine = noteContent.split('\n')[0];
+                  noteTitle = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
+                }
+              } else {
+                noteContent = "Could not find parent message in cache";
+                noteTitle = noteTitle || "Note";
+              }
+            } else {
+              const history = await getChannelHistory(api, groupChannel, 50, runtime);
+              const parentMsg = history.find(msg => msg.id === parentId || msg.id.includes(parentId));
+
+              if (parentMsg) {
+                noteContent = parentMsg.content;
+                if (!noteTitle) {
+                  // Generate title from first line or first 60 chars of content
+                  const firstLine = noteContent.split('\n')[0];
+                  noteTitle = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
+                }
+              } else {
+                noteContent = "Could not find parent message";
+                noteTitle = noteTitle || "Note";
+              }
+            }
+          } else {
+            // No parent - fetch last bot message
+            if (!isGroup) {
+              const dmCacheKey = `dm/${senderShip}`;
+              const cache = messageCache.get(dmCacheKey) || [];
+              const lastBotMsg = cache.find(msg => msg.author === botShipName);
+
+              if (lastBotMsg) {
+                noteContent = lastBotMsg.content;
+                if (!noteTitle) {
+                  // Generate title from first line or first 60 chars of content
+                  const firstLine = noteContent.split('\n')[0];
+                  noteTitle = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
+                }
+              } else {
+                noteContent = "No recent bot message found in cache";
+                noteTitle = noteTitle || "Note";
+              }
+            } else {
+              const history = await getChannelHistory(api, groupChannel, 10, runtime);
+              const lastBotMsg = history.find(msg => msg.author === botShipName);
+
+              if (lastBotMsg) {
+                noteContent = lastBotMsg.content;
+                if (!noteTitle) {
+                  // Generate title from first line or first 60 chars of content
+                  const firstLine = noteContent.split('\n')[0];
+                  noteTitle = firstLine.length > 60 ? firstLine.substring(0, 60) + '...' : firstLine;
+                }
+              } else {
+                noteContent = "No recent bot message found";
+                noteTitle = noteTitle || "Note";
+              }
+            }
+          }
+
+          const { essayId, sentAt } = await sendDiaryPost(
+            api,
+            account,
+            notebookChannel,
+            noteTitle,
+            noteContent
+          );
+
+          const successMsg = `✓ Saved to notebook as "${noteTitle}"`;
+          runtime.log?.(`[tlon] Saved note ${essayId} to ${notebookChannel}`);
+
+          if (isGroup) {
+            const parsed = parseChannelNest(groupChannel);
+            if (parsed) {
+              await sendGroupMessage(api, botShipName, parsed.hostShip, parsed.channelName, successMsg, parentId, runtime);
+            }
+          } else {
+            await sendDm(api, botShipName, senderShip, successMsg);
+          }
+        } catch (error) {
+          runtime.error?.(`[tlon] Error saving to notebook: ${error.message}`);
+          const errorMsg = `Failed to save to notebook: ${error.message}`;
+          if (isGroup) {
+            const parsed = parseChannelNest(groupChannel);
+            if (parsed) {
+              await sendGroupMessage(api, botShipName, parsed.hostShip, parsed.channelName, errorMsg, parentId, runtime);
+            }
+          } else {
+            await sendDm(api, botShipName, senderShip, errorMsg);
+          }
+        }
+        return;
+      }
+
+      // Handle list command (placeholder for now)
+      if (notebookCommand.type === "list_notebook") {
+        const placeholderMsg = "List notebook handler not yet implemented.";
+        if (isGroup) {
+          const parsed = parseChannelNest(groupChannel);
+          if (parsed) {
+            await sendGroupMessage(api, botShipName, parsed.hostShip, parsed.channelName, placeholderMsg, parentId, runtime);
+          }
+        } else {
+          await sendDm(api, botShipName, senderShip, placeholderMsg);
+        }
+        return;
+      }
+
+      return; // Don't send to AI for notebook commands
     }
 
     try {
