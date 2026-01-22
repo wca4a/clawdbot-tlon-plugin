@@ -535,11 +535,16 @@ export async function monitorTlonProvider(opts = {}) {
       const fromLabel = isGroup
         ? `${senderShip} in ${groupName}`
         : senderShip;
+
+      // Add identity context so AI knows its own ship name
+      const identityNote = `[Note: In Tlon/Urbit, you are known as ${botShipName}. When users mention ${botShipName}, they are addressing you directly.]\n\n`;
+      const messageWithIdentity = identityNote + messageText;
+
       const body = deps.formatAgentEnvelope({
         channel: "Tlon",
         from: fromLabel,
         timestamp,
-        body: messageText,
+        body: messageWithIdentity,
       });
 
       // Create inbound context
