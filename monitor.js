@@ -21,7 +21,7 @@ import { unixToDa, formatUd } from "@urbit/aura";
 import { UrbitSSEClient } from "./urbit-sse-client.js";
 import { loadCoreChannelDeps } from "./core-bridge.js";
 
-console.log("[tlon] ====== monitor.js loaded with runtime poke logging ======");
+console.log("[tlon] ====== monitor.js v2 loaded with action.post.reply structure ======");
 
 /**
  * Formats model name for display in signature
