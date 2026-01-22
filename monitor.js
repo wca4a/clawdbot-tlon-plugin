@@ -21,7 +21,7 @@ import { unixToDa, formatUd } from "@urbit/aura";
 import { UrbitSSEClient } from "./urbit-sse-client.js";
 import { loadCoreChannelDeps } from "./core-bridge.js";
 
-console.log("[tlon] ====== monitor.js loaded with thread reply fix (commit 879eb1f) ======");
+console.log("[tlon] ====== monitor.js loaded with thread reply fix + dedup fix (commit fad6ef0) ======");
 
 /**
  * Formats model name for display in signature
@@ -691,11 +691,17 @@ export async function monitorTlonProvider(opts = {}) {
         ? update?.response?.post?.["r-post"]?.reply?.["r-reply"]?.set?.seal
         : update?.response?.post?.["r-post"]?.set?.seal;
 
-      const parentId = seal?.["parent-id"] || seal?.parent || null; // Parent post ID if this is a reply
+      // For thread replies, reply to the specific message, not the parent post
+      // This makes our reply appear as a direct response to the user's message
+      const replyToId = isThreadReply
+        ? seal?.id  // Reply to this specific message in the thread
+        : null;     // Top-level posts don't have a reply target
+
+      const parentId = seal?.["parent-id"] || seal?.parent || null; // Parent post ID (for logging/context)
       const postType = update?.response?.post?.["r-post"]?.set?.type;
 
       runtime.log?.(
-        `[tlon] Message type: ${isThreadReply ? "thread reply" : "top-level post"}, parentId: ${parentId}`
+        `[tlon] Message type: ${isThreadReply ? "thread reply" : "top-level post"}, replyToId: ${replyToId}, parentId: ${parentId}`
       );
 
       await processMessage({
@@ -706,7 +712,8 @@ export async function monitorTlonProvider(opts = {}) {
         groupChannel: channelNest,
         groupName: `${hostShip}/${channelName}`,
         timestamp: content.sent || Date.now(),
-        parentId,
+        replyToId,  // Use replyToId for threading (the specific message to reply to)
+        parentId,   // Keep parentId for context/logging
         postType,
         seal,
       });
@@ -732,7 +739,8 @@ export async function monitorTlonProvider(opts = {}) {
       groupChannel,
       groupName,
       timestamp,
-      parentId,
+      replyToId,  // The specific message ID to reply to (for threading)
+      parentId,   // Parent post ID (for context)
       postType,
       seal,
     } = params;
@@ -887,7 +895,7 @@ export async function monitorTlonProvider(opts = {}) {
             );
 
             // Debug delivery path
-            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}, parentId=${parentId}`);
+            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}, replyToId=${replyToId}, parentId=${parentId}`);
 
             // Send reply back to Tlon
             if (isGroup) {
@@ -895,8 +903,8 @@ export async function monitorTlonProvider(opts = {}) {
               runtime.log?.(`[tlon] 🔍 Parsed channel nest: ${JSON.stringify(parsed)}`);
               if (parsed) {
                 // Reply in thread if this message is part of a thread
-                if (parentId) {
-                  runtime.log?.(`[tlon] Replying in thread (parent: ${parentId})`);
+                if (replyToId) {
+                  runtime.log?.(`[tlon] Replying in thread (replyTo: ${replyToId})`);
                 }
                 await sendGroupMessage(
                   api,
@@ -904,9 +912,9 @@ export async function monitorTlonProvider(opts = {}) {
                   parsed.hostShip,
                   parsed.channelName,
                   replyText,
-                  parentId // Pass parentId for thread support
+                  replyToId // Pass replyToId to reply to the specific message in the thread
                 );
-                const threadInfo = parentId ? ` (in thread)` : '';
+                const threadInfo = replyToId ? ` (in thread)` : '';
                 runtime.log?.(`[tlon] Delivered AI reply to group ${groupName}${threadInfo}`);
               } else {
                 runtime.log?.(`[tlon] ⚠️ Failed to parse channel nest: ${groupChannel}`);
