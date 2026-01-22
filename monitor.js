@@ -691,17 +691,13 @@ export async function monitorTlonProvider(opts = {}) {
         ? update?.response?.post?.["r-post"]?.reply?.["r-reply"]?.set?.seal
         : update?.response?.post?.["r-post"]?.set?.seal;
 
-      // For thread replies, reply to the specific message, not the parent post
-      // This makes our reply appear as a direct response to the user's message
-      const replyToId = isThreadReply
-        ? seal?.id  // Reply to this specific message in the thread
-        : null;     // Top-level posts don't have a reply target
-
-      const parentId = seal?.["parent-id"] || seal?.parent || null; // Parent post ID (for logging/context)
+      // For thread replies, all messages in the thread share the same parent-id
+      // We reply to the parent-id to keep our message in the same thread
+      const parentId = seal?.["parent-id"] || seal?.parent || null;
       const postType = update?.response?.post?.["r-post"]?.set?.type;
 
       runtime.log?.(
-        `[tlon] Message type: ${isThreadReply ? "thread reply" : "top-level post"}, replyToId: ${replyToId}, parentId: ${parentId}`
+        `[tlon] Message type: ${isThreadReply ? "thread reply" : "top-level post"}, parentId: ${parentId}, messageId: ${seal?.id}`
       );
 
       await processMessage({
@@ -712,8 +708,7 @@ export async function monitorTlonProvider(opts = {}) {
         groupChannel: channelNest,
         groupName: `${hostShip}/${channelName}`,
         timestamp: content.sent || Date.now(),
-        replyToId,  // Use replyToId for threading (the specific message to reply to)
-        parentId,   // Keep parentId for context/logging
+        parentId,   // Reply to parent-id to stay in the thread
         postType,
         seal,
       });
@@ -739,8 +734,7 @@ export async function monitorTlonProvider(opts = {}) {
       groupChannel,
       groupName,
       timestamp,
-      replyToId,  // The specific message ID to reply to (for threading)
-      parentId,   // Parent post ID (for context)
+      parentId,   // Parent post ID to reply to (for threading)
       postType,
       seal,
     } = params;
@@ -895,7 +889,7 @@ export async function monitorTlonProvider(opts = {}) {
             );
 
             // Debug delivery path
-            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}, replyToId=${replyToId}, parentId=${parentId}`);
+            runtime.log?.(`[tlon] 🔍 Delivery debug: isGroup=${isGroup}, groupChannel=${groupChannel}, senderShip=${senderShip}, parentId=${parentId}`);
 
             // Send reply back to Tlon
             if (isGroup) {
@@ -903,8 +897,8 @@ export async function monitorTlonProvider(opts = {}) {
               runtime.log?.(`[tlon] 🔍 Parsed channel nest: ${JSON.stringify(parsed)}`);
               if (parsed) {
                 // Reply in thread if this message is part of a thread
-                if (replyToId) {
-                  runtime.log?.(`[tlon] Replying in thread (replyTo: ${replyToId})`);
+                if (parentId) {
+                  runtime.log?.(`[tlon] Replying in thread (parent: ${parentId})`);
                 }
                 await sendGroupMessage(
                   api,
@@ -912,9 +906,9 @@ export async function monitorTlonProvider(opts = {}) {
                   parsed.hostShip,
                   parsed.channelName,
                   replyText,
-                  replyToId // Pass replyToId to reply to the specific message in the thread
+                  parentId // Pass parentId to reply in the thread
                 );
-                const threadInfo = replyToId ? ` (in thread)` : '';
+                const threadInfo = parentId ? ` (in thread)` : '';
                 runtime.log?.(`[tlon] Delivered AI reply to group ${groupName}${threadInfo}`);
               } else {
                 runtime.log?.(`[tlon] ⚠️ Failed to parse channel nest: ${groupChannel}`);
