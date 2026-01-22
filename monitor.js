@@ -116,6 +116,17 @@ async function sendDm(api, fromShip, toShip, text) {
 }
 
 /**
+ * Format a numeric ID with dots every 3 digits (Urbit @ud format)
+ * Example: "170141184507780357587090523864791252992" -> "170.141.184.507.780.357.587.090.523.864.791.252.992"
+ */
+function formatUdId(id) {
+  if (!id) return id;
+  const idStr = String(id);
+  // Insert dots every 3 characters from the left
+  return idStr.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/**
  * Sends a message to a group channel
  * @param {string} replyTo - Optional parent post ID for threading
  */
@@ -123,14 +134,17 @@ async function sendGroupMessage(api, fromShip, hostShip, channelName, text, repl
   const story = [{ inline: [text] }];
   const sentAt = Date.now();
 
+  // Format reply ID with dots for Urbit @ud format
+  const formattedReplyTo = replyTo ? formatUdId(replyTo) : null;
+
   const action = {
     channel: {
       nest: `chat/${hostShip}/${channelName}`,
-      action: replyTo ? {
+      action: formattedReplyTo ? {
         // Reply action for threading (wraps reply in post like official client)
         post: {
           reply: {
-            id: replyTo,
+            id: formattedReplyTo,
             action: {
               add: {
                 content: story,
@@ -156,8 +170,8 @@ async function sendGroupMessage(api, fromShip, hostShip, channelName, text, repl
     },
   };
 
-  runtime?.log?.(`[tlon] 📤 Sending message: replyTo=${replyTo}, text="${text.substring(0, 100)}...", nest=chat/${hostShip}/${channelName}`);
-  runtime?.log?.(`[tlon] 📤 Action type: ${replyTo ? 'REPLY (thread)' : 'POST (main channel)'}`);
+  runtime?.log?.(`[tlon] 📤 Sending message: replyTo=${replyTo} (formatted: ${formattedReplyTo}), text="${text.substring(0, 100)}...", nest=chat/${hostShip}/${channelName}`);
+  runtime?.log?.(`[tlon] 📤 Action type: ${formattedReplyTo ? 'REPLY (thread)' : 'POST (main channel)'}`);
   runtime?.log?.(`[tlon] 📤 Full action structure: ${JSON.stringify(action, null, 2)}`);
 
   try {
