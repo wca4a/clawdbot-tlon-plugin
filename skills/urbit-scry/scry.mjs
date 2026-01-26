@@ -29,7 +29,7 @@ const TTL_CONFIG = {
   "channels.json": 60 * 1000,      // 1 min
   "contacts": 60 * 1000,           // 1 min
   "dm.json": 30 * 1000,            // 30 sec
-  "vats.json": 10 * 60 * 1000,     // 10 min
+  "charges.json": 10 * 60 * 1000,  // 10 min - app tiles
   "posts": 0,                       // no cache - always fresh
   "writs": 0,                       // no cache - always fresh
   "default": 30 * 1000,            // 30 sec
@@ -201,55 +201,9 @@ async function getHistory(url, cookie, nest, count = 50) {
   return formatPosts(data);
 }
 
-// Get messages older than a specific post ID
-async function getOlderPosts(url, cookie, nest, beforeId, count = 50) {
-  const path = `/channels/v4/${nest}/posts/older/${beforeId}/${count}.json`;
-  const data = await scry(url, cookie, path, false);
-  return formatPosts(data);
-}
+// NOTE: Individual post and pagination endpoints (/older, /newer, /posts/{id})
+// are not available via scry in current Tlon. Only /posts/newest/{N}/outline.json works.
 
-// Get a single post with its replies (thread)
-async function getThread(url, cookie, nest, postId) {
-  const postPath = `/channels/v4/${nest}/posts/${postId}.json`;
-  const repliesPath = `/channels/v4/${nest}/posts/${postId}/replies.json`;
-
-  const [post, replies] = await Promise.all([
-    scry(url, cookie, postPath, false),
-    scry(url, cookie, repliesPath, false).catch(() => []),
-  ]);
-
-  return {
-    post: formatPosts([post])[0],
-    replies: formatPosts(replies),
-  };
-}
-
-// Get DM history with a ship
-// NOTE: DM history scry may not be available - Tlon uses subscriptions for DMs
-async function getDmHistory(url, cookie, ship, count = 50) {
-  const normalizedShip = ship.startsWith("~") ? ship : `~${ship}`;
-
-  // Try various possible paths
-  const paths = [
-    `/chat/dm/${normalizedShip}/writs/newest/${count}.json`,
-    `/chat/${normalizedShip}/writs/newest/${count}.json`,
-    `/chat/dm/${normalizedShip}.json`,
-  ];
-
-  for (const path of paths) {
-    try {
-      const data = await scry(url, cookie, path, false);
-      if (data && typeof data === "object") {
-        if (data.writs) return formatPosts(data.writs);
-        return formatPosts(data);
-      }
-    } catch {
-      // Try next path
-    }
-  }
-
-  throw new Error(`DM history not available via scry for ${normalizedShip}. DMs may require subscription-based access.`);
-}
 
 // ============ CLI ============
 
@@ -270,9 +224,6 @@ SHORTCUTS:
 HISTORY:
   --history <nest> [count]         Last N messages from channel
                                    nest = chat/~host/channel-name
-  --older <nest> <id> [count]      Messages older than post ID
-  --thread <nest> <id>             Get post and its replies
-  --dm <ship> [count]              DM history with a ship
 
 RAW SCRY:
   <path>                           Any scry path ending in .json
@@ -285,9 +236,8 @@ OPTIONS:
 EXAMPLES:
   node scry.mjs --groups
   node scry.mjs --history chat/~bitbet-bolbel/urbit-community 20
-  node scry.mjs --dm ~zod 50
-  node scry.mjs --thread chat/~host/channel 170.141.184.505...
   node scry.mjs "/groups/groups.json"
+  node scry.mjs "/contacts/all.json"
 `);
     process.exit(0);
   }
@@ -323,7 +273,7 @@ EXAMPLES:
     } else if (args.includes("--dms")) {
       result = await scry(account.url, cookie, "/chat/dm.json", !noCache);
     } else if (args.includes("--apps")) {
-      result = await scry(account.url, cookie, "/hood/kiln/vats.json", !noCache);
+      result = await scry(account.url, cookie, "/docket/charges.json", !noCache);
     }
     // History helpers
     else if (args.includes("--history")) {
@@ -332,25 +282,6 @@ EXAMPLES:
       const count = parseInt(args[idx + 2]) || 50;
       if (!nest) throw new Error("--history requires nest (e.g., chat/~host/channel)");
       result = await getHistory(account.url, cookie, nest, count);
-    } else if (args.includes("--older")) {
-      const idx = args.indexOf("--older");
-      const nest = args[idx + 1];
-      const postId = args[idx + 2];
-      const count = parseInt(args[idx + 3]) || 50;
-      if (!nest || !postId) throw new Error("--older requires nest and post ID");
-      result = await getOlderPosts(account.url, cookie, nest, postId, count);
-    } else if (args.includes("--thread")) {
-      const idx = args.indexOf("--thread");
-      const nest = args[idx + 1];
-      const postId = args[idx + 2];
-      if (!nest || !postId) throw new Error("--thread requires nest and post ID");
-      result = await getThread(account.url, cookie, nest, postId);
-    } else if (args.includes("--dm")) {
-      const idx = args.indexOf("--dm");
-      const ship = args[idx + 1];
-      const count = parseInt(args[idx + 2]) || 50;
-      if (!ship) throw new Error("--dm requires ship name");
-      result = await getDmHistory(account.url, cookie, ship, count);
     }
     // Raw scry path
     else {

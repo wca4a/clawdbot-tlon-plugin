@@ -1,13 +1,13 @@
 ---
 name: urbit_scry
-description: Query Urbit ship state - groups, channels, message history, DMs, contacts, and apps
+description: Query Urbit ship state - groups, channels, message history, contacts, and apps
 user-invocable: true
 metadata: {"clawdbot":{"emoji":"🔮","requires":{"config":["channels.tlon.enabled"]}}}
 ---
 
 # Urbit Scry Skill
 
-Query your Urbit ship's state via scry. Use this to fetch groups, channels, message history, DMs, contacts, and installed apps.
+Query your Urbit ship's state via scry. Use this to fetch groups, channels, message history, contacts, and installed apps.
 
 ## Quick Reference
 
@@ -30,58 +30,21 @@ node {baseDir}/scry.mjs --history <nest> [count]
 
 Example:
 ```bash
-node {baseDir}/scry.mjs --history chat/~bitbet-bolbel/urbit-community 20
+node {baseDir}/scry.mjs --history chat/~dabben-larbet/devs 20
 ```
 
-### Get older messages (pagination)
-```bash
-node {baseDir}/scry.mjs --older <nest> <post-id> [count]
-```
-Use the `id` from the oldest message in previous results to page backwards.
+### Output Format
 
-Example:
-```bash
-node {baseDir}/scry.mjs --older chat/~host/channel 170.141.184.505.382.289 50
-```
-
-### Get a thread (post + replies)
-```bash
-node {baseDir}/scry.mjs --thread <nest> <post-id>
-```
-Returns the original post and all its replies.
-
-### Get DM history with a ship
-```bash
-node {baseDir}/scry.mjs --dm <ship> [count]
-```
-
-Example:
-```bash
-node {baseDir}/scry.mjs --dm "~zod" 50
-```
-
-**Note:** DM history may not be available via scry on all ships. Tlon primarily uses subscriptions for DM access. Use `--dms` to list DM conversations instead.
-
-## Output Format
-
-History commands return formatted messages:
+History returns formatted messages:
 ```json
 [
   {
-    "id": "170.141.184.505.382.289.616.716.800.565.297.152",
+    "id": "170141184507790725820779267587779330048",
     "author": "~sampel-palnet",
     "content": "Hello world",
-    "sent": "2024-01-26T15:30:00.000Z"
+    "sent": "2026-01-26T15:30:00.000Z"
   }
 ]
-```
-
-Thread command returns:
-```json
-{
-  "post": { "id": "...", "author": "...", "content": "...", "sent": "..." },
-  "replies": [ ... ]
-}
 ```
 
 ## Raw Scry (Advanced)
@@ -95,9 +58,10 @@ Common paths:
 - `/groups/groups.json` - All groups
 - `/channels/v4/channels.json` - All channels
 - `/contacts/all.json` - All contacts
-- `/chat/dm.json` - DM list
+- `/chat/dm.json` - DM conversation list
 - `/hood/kiln/vats.json` - Installed apps
-- `/groups-ui/v6/init.json` - Full init (SLOW, ~100KB)
+- `/docket/charges.json` - App tiles
+- `/groups-ui/v6/init.json` - Full init (SLOW, ~100KB+)
 
 ## Options
 
@@ -109,11 +73,13 @@ Common paths:
 
 ## Caching
 
-- Groups, channels, contacts: cached 1 minute
-- DM list: cached 30 seconds
-- Apps: cached 10 minutes
-- Message history: NEVER cached (always fresh)
-- init.json: cached 5 minutes
+Results are cached in `~/.clawdbot/cache/tlon-scry/`:
+
+- Groups, channels, contacts: 1 minute
+- DM list: 30 seconds
+- Apps: 10 minutes
+- init.json: 5 minutes
+- **Message history: NEVER cached** (always fresh)
 
 ## Finding Channel Nests
 
@@ -126,6 +92,13 @@ To get a channel's nest for history queries:
 
 - User asks "what groups am I in?" → `--groups`
 - User asks "show recent messages in X" → `--history chat/~host/X 20`
-- User asks "what did ~ship say to me?" → `--dm ~ship 50`
-- User asks "get the full thread on that post" → `--thread <nest> <id>`
-- User asks "show older messages" → `--older <nest> <last-id> 50`
+- User asks "who can I DM?" → `--dms`
+- User asks "what apps are installed?" → `--apps`
+- User asks about contacts → `--contacts`
+
+## Limitations
+
+- Individual post lookup (`/posts/{id}`) not available via scry
+- Pagination (`/posts/older/`, `/posts/newer/`) not available via scry
+- DM message history not available via scry (use `--dms` for conversation list only)
+- Thread replies must be fetched via subscription, not scry
