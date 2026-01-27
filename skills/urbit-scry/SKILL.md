@@ -23,17 +23,68 @@ Query your Urbit ship's state via scry. Use this to fetch groups, channels, mess
 
 Groups are keyed by ID (`~host/group-name`). Count groups with `Object.keys(groups).length`.
 
+### Group Terminology
+
+| Field | Purpose | Example |
+|-------|---------|---------|
+| **fleet** | Member list (ships in group) | `{ "~host": { "sects": ["admin"], "joined": 1234567 } }` |
+| **cabals** | Roles/permissions available | `{ "admin": { "meta": { "title": "Admin" } } }` |
+| **sects** | Roles assigned to a member | Array like `["admin"]` or `[]` for no roles |
+| **cordon** | Access control (join policy) | `{ "shut": { "pending": [], "ask": [] } }` |
+| **zones** | Channel groupings/sections | Organizational structure |
+| **meta** | Group metadata | Title, description, image, cover |
+
+### Get Group Count & List
+
 ```javascript
-// Get group count
 const groups = await scry("/groups/groups.json");
 const count = Object.keys(groups).length;
 
-// Get group list with titles
 const groupList = Object.entries(groups).map(([id, g]) => ({
   id,
   title: g.meta?.title || id,
-  description: g.meta?.description || ""
+  description: g.meta?.description || "",
+  memberCount: Object.keys(g.fleet).length
 }));
+```
+
+### Get Group Members
+
+```javascript
+const group = groups["~malmur-halmex/janet-and-billy"];
+
+// Fleet contains all members
+const members = Object.entries(group.fleet).map(([ship, vessel]) => ({
+  ship,
+  roles: vessel.sects,  // e.g., ["admin"] or []
+  joinedAt: new Date(vessel.joined).toISOString()
+}));
+
+// Count members
+const totalMembers = Object.keys(group.fleet).length;
+
+// Get admins only
+const admins = Object.entries(group.fleet)
+  .filter(([_, vessel]) => vessel.sects.includes("admin"))
+  .map(([ship, _]) => ship);
+```
+
+### Full Group Analysis
+
+```javascript
+const analyzeGroup = (groupData) => ({
+  title: groupData.meta?.title,
+  memberCount: Object.keys(groupData.fleet).length,
+  members: Object.entries(groupData.fleet).map(([ship, vessel]) => ({
+    ship,
+    roles: vessel.sects,
+    joined: vessel.joined
+  })),
+  availableRoles: Object.keys(groupData.cabals),
+  channelCount: Object.keys(groupData.channels).length,
+  isSecret: groupData.secret,
+  joinPolicy: groupData.cordon  // "open", "shut", or "afar"
+});
 ```
 
 ## Message History
