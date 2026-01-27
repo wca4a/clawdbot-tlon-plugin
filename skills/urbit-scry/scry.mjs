@@ -3,11 +3,13 @@
  * Urbit Scry Script
  * Query your Urbit ship state via scry interface.
  *
+ * Paths derived from tloncorp/tlon-apps postsApi.ts
+ *
  * Usage:
  *   Raw scry:     node scry.mjs "/groups/groups.json"
  *   History:      node scry.mjs --history chat/~host/channel 50
- *   Older posts:  node scry.mjs --older chat/~host/channel POST_ID 50
- *   Thread:       node scry.mjs --thread chat/~host/channel POST_ID
+ *   Older posts:  node scry.mjs --older chat/~host/channel CURSOR 50
+ *   Single post:  node scry.mjs --post chat/~host/channel POST_ID
  *   DM history:   node scry.mjs --dm ~sampel-palnet 50
  *   Groups:       node scry.mjs --groups
  *   Channels:     node scry.mjs --channels
@@ -18,6 +20,22 @@ import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { createHash } from "crypto";
+
+// Format @ud number to dotted notation (required for scry paths)
+// e.g., "170141184506312077223314290444316180480" → "170.141.184.506.312.077..."
+function formatUd(num) {
+  const str = String(num).replace(/\./g, ""); // Remove existing dots
+  const chunks = [];
+  for (let i = str.length; i > 0; i -= 3) {
+    chunks.unshift(str.slice(Math.max(0, i - 3), i));
+  }
+  return chunks.join(".");
+}
+
+// Build scry path, filtering out null/undefined segments
+function formatScryPath(...segments) {
+  return "/" + segments.filter(s => s != null && s !== "").join("/");
+}
 
 const CONFIG_PATH = join(homedir(), ".clawdbot", "clawdbot.json");
 const CACHE_DIR = join(homedir(), ".clawdbot", "cache", "tlon-scry");
@@ -163,6 +181,19 @@ function extractText(content) {
   }).join("");
 }
 
+// Format a single reply
+function formatReply(reply) {
+  const memo = reply.memo;
+  const seal = reply.seal;
+
+  return {
+    id: seal?.id,
+    author: memo?.author || "unknown",
+    content: extractText(memo?.content || []),
+    sent: new Date(memo?.sent || Date.now()).toISOString()
+  };
+}
+
 // Format posts for readable output
 function formatPosts(data, verbose = false) {
   // Handle nested { posts: {...} } structure from channel history
@@ -184,25 +215,139 @@ function formatPosts(data, verbose = false) {
       const sent = essay?.sent || memo?.sent || Date.now();
       const id = seal?.id || item.id;
 
-      if (verbose) {
-        return { id, author, content, sent: new Date(sent).toISOString(), raw: item };
+      // Extract replies if present
+      const replies = seal?.replies && typeof seal.replies === "object"
+        ? Object.values(seal.replies)
+            .filter(r => r !== null && r !== undefined)
+            .map(formatReply)
+        : [];
+
+      const post = {
+        id,
+        author,
+        content,
+        sent: new Date(sent).toISOString()
+      };
+
+      if (replies.length > 0) {
+        post.replies = replies;
       }
-      return { id, author, content, sent: new Date(sent).toISOString() };
+
+      if (verbose) {
+        post.raw = item;
+      }
+
+      return post;
     })
     .filter(m => m.content);
 }
 
 // ============ HELPER FUNCTIONS ============
+// Based on tloncorp/tlon-apps postsApi.ts
 
 // Get last N messages from a channel
-async function getHistory(url, cookie, nest, count = 50) {
-  const path = `/channels/v4/${nest}/posts/newest/${count}/outline.json`;
+// Path: /v4/{channelId}/posts/newest/{count}/{format}
+async function getHistory(url, cookie, nest, count = 50, includeReplies = false) {
+  const format = includeReplies ? "post" : "outline";
+  const path = formatScryPath("channels", "v4", nest, "posts", "newest", count, format + ".json");
   const data = await scry(url, cookie, path, false); // no cache for posts
   return formatPosts(data);
 }
 
-// NOTE: Individual post and pagination endpoints (/older, /newer, /posts/{id})
-// are not available via scry in current Tlon. Only /posts/newest/{N}/outline.json works.
+// Get posts older than a cursor (pagination)
+// Path: /v4/{channelId}/posts/older/{cursor}/{count}/{format}
+async function getOlderPosts(url, cookie, nest, cursor, count = 50, includeReplies = false) {
+  const format = includeReplies ? "post" : "outline";
+  const formattedCursor = formatUd(cursor);
+  const path = formatScryPath("channels", "v4", nest, "posts", "older", formattedCursor, count, format + ".json");
+  const data = await scry(url, cookie, path, false);
+  return formatPosts(data);
+}
+
+// Get posts newer than a cursor (pagination)
+// Path: /v4/{channelId}/posts/newer/{cursor}/{count}/{format}
+async function getNewerPosts(url, cookie, nest, cursor, count = 50, includeReplies = false) {
+  const format = includeReplies ? "post" : "outline";
+  const formattedCursor = formatUd(cursor);
+  const path = formatScryPath("channels", "v4", nest, "posts", "newer", formattedCursor, count, format + ".json");
+  const data = await scry(url, cookie, path, false);
+  return formatPosts(data);
+}
+
+// Get a single post by ID (with replies)
+// Path: /v4/{channelId}/posts/post/{postId}
+async function getPost(url, cookie, nest, postId) {
+  const formattedId = formatUd(postId);
+  const path = formatScryPath("channels", "v4", nest, "posts", "post", formattedId + ".json");
+  const data = await scry(url, cookie, path, false);
+  return data;
+}
+
+// Get DM history
+// Path: /v3/dm/{dm-id}/writs/newest/{count}/{format}
+async function getDmHistory(url, cookie, dmId, count = 50, includeReplies = false) {
+  const format = includeReplies ? "heavy" : "light";
+  const path = formatScryPath("chat", "v3", "dm", dmId, "writs", "newest", count, format + ".json");
+  const data = await scry(url, cookie, path, false);
+  return formatWrits(data);
+}
+
+// Get club (group DM) history
+// Path: /v3/club/{club-id}/writs/newest/{count}/{format}
+async function getClubHistory(url, cookie, clubId, count = 50, includeReplies = false) {
+  const format = includeReplies ? "heavy" : "light";
+  const path = formatScryPath("chat", "v3", "club", clubId, "writs", "newest", count, format + ".json");
+  const data = await scry(url, cookie, path, false);
+  return formatWrits(data);
+}
+
+// Format DM writs for readable output
+// Note: DMs can have 'essay' (newer API) or 'memo' (older API)
+function formatWrits(data, verbose = false) {
+  let writs = data;
+  if (data && data.writs && typeof data.writs === "object") {
+    writs = data.writs;
+  }
+
+  const items = Array.isArray(writs) ? writs : Object.values(writs);
+  return items
+    .filter(item => item !== null && item !== undefined)
+    .map(item => {
+      // Try essay first (newer API), then memo (older API)
+      const essay = item.essay || item.memo;
+      const seal = item.seal;
+
+      const author = essay?.author || "unknown";
+      const content = extractText(essay?.content || []);
+      const sent = essay?.sent || Date.now();
+      const id = seal?.id || item.id;
+
+      // Extract replies if present (same structure as channel posts)
+      const replies = seal?.replies && typeof seal.replies === "object"
+        ? Object.values(seal.replies)
+            .filter(r => r !== null && r !== undefined)
+            .map(formatReply)
+        : [];
+
+      const writ = {
+        id,
+        author,
+        content,
+        sent: new Date(sent).toISOString()
+      };
+
+      if (replies.length > 0) {
+        writ.replies = replies;
+      }
+
+      if (verbose) {
+        writ.raw = item;
+      }
+
+      return writ;
+    })
+    .filter(m => m.content);
+}
 
 
 // ============ CLI ============
@@ -213,6 +358,7 @@ async function main() {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     console.log(`
 Urbit Scry - Query your Urbit ship
+(Paths from tloncorp/tlon-apps postsApi.ts)
 
 SHORTCUTS:
   --groups                         List all groups
@@ -221,9 +367,15 @@ SHORTCUTS:
   --dms                            List DM conversations
   --apps                           List installed apps
 
-HISTORY:
+CHANNEL HISTORY:
   --history <nest> [count]         Last N messages from channel
-                                   nest = chat/~host/channel-name
+  --older <nest> <cursor> [count]  Posts older than cursor
+  --newer <nest> <cursor> [count]  Posts newer than cursor
+  --post <nest> <postId>           Single post with replies
+
+DM HISTORY:
+  --dm <ship> [count]              DM history with ship
+  --club <club-id> [count]         Group DM history
 
 RAW SCRY:
   <path>                           Any scry path ending in .json
@@ -232,12 +384,15 @@ OPTIONS:
   --no-cache                       Bypass cache
   --account <id>                   Use specific Tlon account
   --verbose                        Include raw response data
+  --replies                        Include replies (use with --history)
 
 EXAMPLES:
   node scry.mjs --groups
   node scry.mjs --history chat/~bitbet-bolbel/urbit-community 20
+  node scry.mjs --older chat/~host/channel 170.141.184... 50
+  node scry.mjs --post chat/~host/channel 170.141.184...
+  node scry.mjs --dm ~sampel-palnet 50
   node scry.mjs "/groups/groups.json"
-  node scry.mjs "/contacts/all.json"
 `);
     process.exit(0);
   }
@@ -245,6 +400,7 @@ EXAMPLES:
   // Parse flags
   const noCache = args.includes("--no-cache");
   const verbose = args.includes("--verbose");
+  const includeReplies = args.includes("--replies");
   let accountId = "default";
   const accountIdx = args.indexOf("--account");
   if (accountIdx !== -1) accountId = args[accountIdx + 1];
@@ -281,7 +437,49 @@ EXAMPLES:
       const nest = args[idx + 1];
       const count = parseInt(args[idx + 2]) || 50;
       if (!nest) throw new Error("--history requires nest (e.g., chat/~host/channel)");
-      result = await getHistory(account.url, cookie, nest, count);
+      result = await getHistory(account.url, cookie, nest, count, includeReplies);
+    }
+    // Pagination: older
+    else if (args.includes("--older")) {
+      const idx = args.indexOf("--older");
+      const nest = args[idx + 1];
+      const cursor = args[idx + 2];
+      const count = parseInt(args[idx + 3]) || 50;
+      if (!nest || !cursor) throw new Error("--older requires nest and cursor");
+      result = await getOlderPosts(account.url, cookie, nest, cursor, count, includeReplies);
+    }
+    // Pagination: newer
+    else if (args.includes("--newer")) {
+      const idx = args.indexOf("--newer");
+      const nest = args[idx + 1];
+      const cursor = args[idx + 2];
+      const count = parseInt(args[idx + 3]) || 50;
+      if (!nest || !cursor) throw new Error("--newer requires nest and cursor");
+      result = await getNewerPosts(account.url, cookie, nest, cursor, count, includeReplies);
+    }
+    // Single post
+    else if (args.includes("--post")) {
+      const idx = args.indexOf("--post");
+      const nest = args[idx + 1];
+      const postId = args[idx + 2];
+      if (!nest || !postId) throw new Error("--post requires nest and postId");
+      result = await getPost(account.url, cookie, nest, postId);
+    }
+    // DM history
+    else if (args.includes("--dm")) {
+      const idx = args.indexOf("--dm");
+      const dmId = args[idx + 1];
+      const count = parseInt(args[idx + 2]) || 50;
+      if (!dmId) throw new Error("--dm requires ship (e.g., ~sampel-palnet)");
+      result = await getDmHistory(account.url, cookie, dmId, count, includeReplies);
+    }
+    // Club (group DM) history
+    else if (args.includes("--club")) {
+      const idx = args.indexOf("--club");
+      const clubId = args[idx + 1];
+      const count = parseInt(args[idx + 2]) || 50;
+      if (!clubId) throw new Error("--club requires club-id");
+      result = await getClubHistory(account.url, cookie, clubId, count, includeReplies);
     }
     // Raw scry path
     else {

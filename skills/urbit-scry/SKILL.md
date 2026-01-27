@@ -24,13 +24,35 @@ Query your Urbit ship's state via scry. Use this to fetch groups, channels, mess
 ### Get channel history
 ```bash
 node {baseDir}/scry.mjs --history <nest> [count]
+node {baseDir}/scry.mjs --history <nest> [count] --replies  # include replies
 ```
 - `nest` = channel path like `chat/~bitbet-bolbel/urbit-community`
 - `count` = number of messages (default 50)
 
-Example:
+### Pagination (older/newer)
+```bash
+node {baseDir}/scry.mjs --older <nest> <cursor> [count]
+node {baseDir}/scry.mjs --newer <nest> <cursor> [count]
+```
+Use the cursor from previous response's `older` or `newer` field.
+
+### Get single post with replies
+```bash
+node {baseDir}/scry.mjs --post <nest> <postId>
+```
+
+### DM history
+```bash
+node {baseDir}/scry.mjs --dm <ship> [count]
+node {baseDir}/scry.mjs --club <club-id> [count]  # group DMs
+```
+
+### Examples
 ```bash
 node {baseDir}/scry.mjs --history chat/~dabben-larbet/devs 20
+node {baseDir}/scry.mjs --older chat/~host/channel 170.141.184... 50
+node {baseDir}/scry.mjs --post chat/~host/channel 170.141.184...
+node {baseDir}/scry.mjs --dm ~sampel-palnet 50
 ```
 
 ### Output Format
@@ -39,7 +61,7 @@ History returns formatted messages:
 ```json
 [
   {
-    "id": "170141184507790725820779267587779330048",
+    "id": "170.141.184.507.790.725.820.779.267.587.779.330.048",
     "author": "~sampel-palnet",
     "content": "Hello world",
     "sent": "2026-01-26T15:30:00.000Z"
@@ -96,9 +118,16 @@ To get a channel's nest for history queries:
 - User asks "what apps are installed?" → `--apps`
 - User asks about contacts → `--contacts`
 
+## Scry Paths (from tlon-apps)
+
+Channel posts use `/v4/{channelId}/posts/{mode}/{cursor?}/{count}/{format}`:
+- Modes: `newest`, `older`, `newer`, `post`
+- Formats: `outline` (lightweight) or `post` (with replies)
+
+DMs use `/v3/dm/{id}/writs/{mode}/{cursor?}/{count}/{format}`:
+- Formats: `light` or `heavy` (with replies)
+
 ## Limitations
 
-- Individual post lookup (`/posts/{id}`) not available via scry
-- Pagination (`/posts/older/`, `/posts/newer/`) not available via scry
-- DM message history not available via scry (use `--dms` for conversation list only)
-- Thread replies must be fetched via subscription, not scry
+- Thread replies require `--replies` flag or raw scry with `post`/`heavy` format
+- Club (group DM) IDs are UUIDs, not ship names
