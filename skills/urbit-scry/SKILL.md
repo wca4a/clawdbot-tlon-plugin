@@ -19,6 +19,23 @@ Query your Urbit ship's state via scry. Use this to fetch groups, channels, mess
 | List DM conversations | `node {baseDir}/scry.mjs --dms` |
 | List installed apps | `node {baseDir}/scry.mjs --apps` |
 
+## Parsing Groups Response
+
+Groups are keyed by ID (`~host/group-name`). Count groups with `Object.keys(groups).length`.
+
+```javascript
+// Get group count
+const groups = await scry("/groups/groups.json");
+const count = Object.keys(groups).length;
+
+// Get group list with titles
+const groupList = Object.entries(groups).map(([id, g]) => ({
+  id,
+  title: g.meta?.title || id,
+  description: g.meta?.description || ""
+}));
+```
+
 ## Message History
 
 ### Get channel history
